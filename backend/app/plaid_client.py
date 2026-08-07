@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import certifi
 import plaid
 from plaid.api import plaid_api
 from plaid.model.accounts_balance_get_request import AccountsBalanceGetRequest
@@ -26,6 +27,10 @@ def _get_client() -> plaid_api.PlaidApi:
         configuration = plaid.Configuration(
             host=get_plaid_host(),
             api_key={"clientId": PLAID_CLIENT_ID, "secret": PLAID_SECRET},
+            # plaid-python's urllib3 client doesn't fall back to certifi like
+            # requests does, so on a python.org macOS build that never ran
+            # "Install Certificates.command" it fails cert verification.
+            ssl_ca_cert=certifi.where(),
         )
         _client = plaid_api.PlaidApi(plaid.ApiClient(configuration))
     return _client
@@ -57,8 +62,10 @@ def fetch_transactions(access_token: str, start_date: str | None = None, end_dat
     cursor = None
     has_more = True
     while has_more:
-        request = TransactionsSyncRequest(access_token=access_token, cursor=cursor)
-        response = _get_client().transactions_sync(request)
+        kwargs = {"access_token": access_token}
+        if cursor is not None:
+            kwargs["cursor"] = cursor
+        response = _get_client().transactions_sync(TransactionsSyncRequest(**kwargs))
         transactions.extend(t.to_dict() for t in response.added)
         cursor = response.next_cursor
         has_more = response.has_more
