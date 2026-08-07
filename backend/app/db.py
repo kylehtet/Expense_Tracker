@@ -1,0 +1,150 @@
+"""SQLite persistence (portable to Postgres later via DATABASE_URL) for linked
+items, synced transactions, and per-category budgets."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Iterator, Optional
+
+from sqlalchemy import Float, String, UniqueConstraint, create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
+from app.config import DATABASE_URL
+from app.crypto import decrypt, encrypt
+
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, connect_args=_connect_args)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Item(Base):
+    """One Plaid Item (linked bank connection) per user. access_token is only
+    ever stored encrypted, and there's no way to read it back in plaintext
+    except through decrypt_access_token below - never serialized to the API."""
+
+    __tablename__ = "items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    access_token_encrypted: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
+
+
+class TransactionRecord(Base):
+    __tablename__ = "transactions"
+
+    # Plaid's own transaction_id as the primary key means re-syncing the same
+    # transaction is a natural upsert, not a duplicate.
+    transaction_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    date: Mapped[str] = mapped_column(String)
+    name: Mapped[str] = mapped_column(String)
+    merchant_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    amount: Mapped[float] = mapped_column(Float)
+    category: Mapped[str] = mapped_column(String)
+
+
+class BudgetRecord(Base):
+    __tablename__ = "budgets"
+    __table_args__ = (UniqueConstraint("user_id", "category", name="uq_budget_user_category"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    category: Mapped[str] = mapped_column(String)
+    amount: Mapped[float] = mapped_column(Float)
+
+
+def init_db() -> None:
+    Base.metadata.create_all(engine)
+
+
+def get_db() -> Iterator[Session]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def save_item(db: Session, user_id: str, access_token: str) -> None:
+    existing = db.scalar(select(Item).where(Item.user_id == user_id))
+    encrypted = encrypt(access_token)
+    if existing:
+        existing.access_token_encrypted = encrypted
+    else:
+        db.add(Item(user_id=user_id, access_token_encrypted=encrypted))
+    db.commit()
+
+
+def get_access_token(db: Session, user_id: str) -> Optional[str]:
+    item = db.scalar(select(Item).where(Item.user_id == user_id))
+    return decrypt(item.access_token_encrypted) if item else None
+
+
+def upsert_transactions(db: Session, user_id: str, categorized_transactions: list[dict]) -> int:
+    """categorized_transactions: dicts with transaction_id, date, name,
+    merchant_name, amount, category (already run through categorize_transaction)."""
+    count = 0
+    for txn in categorized_transactions:
+        existing = db.get(TransactionRecord, txn["transaction_id"])
+        if existing:
+            existing.date = str(txn["date"])
+            existing.name = txn["name"]
+            existing.merchant_name = txn.get("merchant_name")
+            existing.amount = txn["amount"]
+            existing.category = txn["category"]
+        else:
+            db.add(
+                TransactionRecord(
+                    transaction_id=txn["transaction_id"],
+                    user_id=user_id,
+                    date=str(txn["date"]),
+                    name=txn["name"],
+                    merchant_name=txn.get("merchant_name"),
+                    amount=txn["amount"],
+                    category=txn["category"],
+                )
+            )
+        count += 1
+    db.commit()
+    return count
+
+
+def get_transactions(
+    db: Session,
+    user_id: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    category: Optional[str] = None,
+) -> list[TransactionRecord]:
+    query = select(TransactionRecord).where(TransactionRecord.user_id == user_id)
+    if start_date:
+        query = query.where(TransactionRecord.date >= start_date)
+    if end_date:
+        query = query.where(TransactionRecord.date <= end_date)
+    if category:
+        query = query.where(TransactionRecord.category == category)
+    return list(db.scalars(query.order_by(TransactionRecord.date.desc())))
+
+
+def set_budget(db: Session, user_id: str, category: str, amount: float) -> BudgetRecord:
+    existing = db.scalar(
+        select(BudgetRecord).where(BudgetRecord.user_id == user_id, BudgetRecord.category == category)
+    )
+    if existing:
+        existing.amount = amount
+    else:
+        existing = BudgetRecord(user_id=user_id, category=category, amount=amount)
+        db.add(existing)
+    db.commit()
+    db.refresh(existing)
+    return existing
+
+
+def get_budgets(db: Session, user_id: str) -> dict[str, float]:
+    rows = db.scalars(select(BudgetRecord).where(BudgetRecord.user_id == user_id))
+    return {row.category: row.amount for row in rows}

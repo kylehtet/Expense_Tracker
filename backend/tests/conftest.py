@@ -1,7 +1,19 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
+
+
+def pytest_configure(config):
+    """Runs before any test module is imported, so app.config's module-level
+    constants (read once from os.environ at import time) see a valid test
+    ENCRYPTION_KEY regardless of which test file happens to import it first."""
+    os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode())
+    os.environ.setdefault("PLAID_CLIENT_ID", "test-client-id")
+    os.environ.setdefault("PLAID_SECRET", "test-secret")
+
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

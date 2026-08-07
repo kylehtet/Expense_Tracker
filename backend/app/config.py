@@ -11,6 +11,9 @@ PLAID_ENV = os.environ.get("PLAID_ENV", "sandbox")
 PLAID_CLIENT_ID = os.environ.get("PLAID_CLIENT_ID")
 PLAID_SECRET = os.environ.get("PLAID_SECRET")
 
+ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./expense_tracker.db")
+
 # Plaid retired the standalone "Development" host; real-bank access below full
 # Production Access review now happens over the Production host itself
 # ("Limited Production", capped at a small free call volume). We keep our own
