@@ -1,0 +1,18 @@
+{
+  "source": "Manually curated educational estimate dataset, illustrative figures in the range reported by Numbeo and Census ACS median rent/home value surveys. Approximate metro-level averages only — intended to be replaced by a live Numbeo/Census API feed in production.",
+  "last_updated": "2026-08-07",
+  "cities": [
+    { "city": "New York", "state": "NY", "median_1br_rent": 3700, "median_home_price": 780000, "cost_of_living_index": 148 },
+    { "city": "San Francisco", "state": "CA", "median_1br_rent": 3100, "median_home_price": 1300000, "cost_of_living_index": 180 },
+    { "city": "Los Angeles", "state": "CA", "median_1br_rent": 2400, "median_home_price": 950000, "cost_of_living_index": 150 },
+    { "city": "Chicago", "state": "IL", "median_1br_rent": 1900, "median_home_price": 330000, "cost_of_living_index": 106 },
+    { "city": "Austin", "state": "TX", "median_1br_rent": 1500, "median_home_price": 470000, "cost_of_living_index": 112 },
+    { "city": "Houston", "state": "TX", "median_1br_rent": 1250, "median_home_price": 330000, "cost_of_living_index": 95 },
+    { "city": "Seattle", "state": "WA", "median_1br_rent": 2100, "median_home_price": 830000, "cost_of_living_index": 130 },
+    { "city": "Denver", "state": "CO", "median_1br_rent": 1650, "median_home_price": 570000, "cost_of_living_index": 116 },
+    { "city": "Miami", "state": "FL", "median_1br_rent": 2400, "median_home_price": 550000, "cost_of_living_index": 121 },
+    { "city": "Atlanta", "state": "GA", "median_1br_rent": 1550, "median_home_price": 400000, "cost_of_living_index": 103 },
+    { "city": "Phoenix", "state": "AZ", "median_1br_rent": 1350, "median_home_price": 440000, "cost_of_living_index": 104 },
+    { "city": "Boston", "state": "MA", "median_1br_rent": 2800, "median_home_price": 780000, "cost_of_living_index": 145 }
+  ]
+}

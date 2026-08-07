@@ -1,0 +1,18 @@
+{
+  "rates": [
+    {
+      "series_id": "MORTGAGE30US",
+      "label": "30_year_fixed",
+      "rate_percent": 6.69,
+      "as_of_date": "2026-08-06",
+      "source": "FRED (Federal Reserve Economic Data) series MORTGAGE30US, mirrors Freddie Mac Primary Mortgage Market Survey (PMMS)"
+    },
+    {
+      "series_id": "MORTGAGE15US",
+      "label": "15_year_fixed",
+      "rate_percent": 6.01,
+      "as_of_date": "2026-08-06",
+      "source": "FRED (Federal Reserve Economic Data) series MORTGAGE15US, mirrors Freddie Mac Primary Mortgage Market Survey (PMMS)"
+    }
+  ]
+}
