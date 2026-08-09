@@ -1,76 +1,123 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
+/* One token set, both modes. light-dark() reads color-scheme, so
+   prefers-color-scheme is honoured automatically and a manual [data-theme]
+   toggle only flips color-scheme on the root - no duplicated blocks. */
 :root {
-  color-scheme: light;
-  --surface-1: #fcfcfb;
-  --page-plane: #f9f9f7;
-  --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
-  --text-muted: #898781;
-  --gridline: #e1e0d9;
-  --baseline: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.1);
+  color-scheme: light dark;
 
-  /* categorical: Housing, Food, Transport, Subscriptions, Entertainment, Other */
-  --series-housing: #2a78d6;
-  --series-food: #eb6834;
-  --series-transport: #1baf7a;
-  --series-subscriptions: #eda100;
-  --series-entertainment: #e87ba4;
-  --series-other: #008300;
+  --ink: light-dark(#1d1f20, #ecedee);
+  --ink-muted: light-dark(#5d5d60, #a8a9ac);
+  --ink-faint: light-dark(#646467, #8e8f93);
+  --ground: light-dark(#f2f2f3, #121417);
+  --surface: light-dark(#f8f8f9, #191c20);
+  --sunken: light-dark(#e9e9ea, #0d0f11);
+  --accent: light-dark(#5980a6, #9dbdd8); /* chrome + fills, 3:1 */
+  --accent-deep: light-dark(#3d5c78, #9dbdd8); /* anything with text */
+  --accent-press: light-dark(#2f4a63, #bcd3e6);
+  --accent-tint: light-dark(#eaf0f6, #1b2733);
+  --hairline: light-dark(#d4d4d7, #2a2e33);
+  --rule: light-dark(#e6e6e9, #24272b);
+  --field: light-dark(#c9c9cc, #3a3f45);
+  --track: light-dark(#e2e2e5, #24272b);
 
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
-  --status-critical: #d03b3b;
+  /* Category fills - share bar and transaction dots only, never text */
+  --cat-housing: light-dark(#3f6e92, #6b9ec4);
+  --cat-food: light-dark(#2e8090, #4faec0);
+  --cat-entertainment: light-dark(#c2698d, #e096b3);
+  --cat-transport: light-dark(#5b6fb5, #8b9cdc);
+  --cat-other: light-dark(#7a7a7d, #9a9b9f);
+  --cat-subs: light-dark(#8e5f8c, #bd8fbb);
+
+  /* Status - fg is used as text, both modes clear 4.5:1 on its own bg */
+  --good: light-dark(#26694c, #63c193);
+  --good-bg: light-dark(#e4f0ea, #14261e);
+  --good-br: light-dark(#a9cfbe, #2e5a45);
+  --warn: light-dark(#7f5709, #dcae4e);
+  --warn-bg: light-dark(#fbf1d8, #2a2113);
+  --warn-br: light-dark(#e3c684, #5c4a20);
+  --crit: light-dark(#9c3025, #e28377);
+  --crit-bg: light-dark(#f8e5e2, #2a1714);
+  --crit-br: light-dark(#e0b0a9, #5c3229);
+  --sandbox-text: light-dark(#6b4e0f, #f0d79a);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) {
-    color-scheme: dark;
-    --surface-1: #1a1a19;
-    --page-plane: #0d0d0d;
-    --text-primary: #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted: #898781;
-    --gridline: #2c2c2a;
-    --baseline: #383835;
-    --border: rgba(255, 255, 255, 0.1);
+/* Manual toggle: set data-theme on <html>; unset = follow the OS */
+[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
 
-    --series-housing: #3987e5;
-    --series-food: #d95926;
-    --series-transport: #199e70;
-    --series-subscriptions: #c98500;
-    --series-entertainment: #d55181;
-    --series-other: #008300;
-
-    --status-good: #0ca30c;
-    --status-warning: #fab219;
-    --status-critical: #d03b3b;
-  }
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --surface-1: #1a1a19;
-  --page-plane: #0d0d0d;
-  --text-primary: #ffffff;
-  --text-secondary: #c3c2b7;
-  --text-muted: #898781;
-  --gridline: #2c2c2a;
-  --baseline: #383835;
-  --border: rgba(255, 255, 255, 0.1);
-
-  --series-housing: #3987e5;
-  --series-food: #d95926;
-  --series-transport: #199e70;
-  --series-subscriptions: #c98500;
-  --series-entertainment: #d55181;
-  --series-other: #008300;
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-press: var(--accent-press);
+  --color-accent-tint: var(--accent-tint);
+  --color-hairline: var(--hairline);
+  --color-rule: var(--rule);
+  --color-field: var(--field);
+  --color-track: var(--track);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-good-br: var(--good-br);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-br: var(--warn-br);
+  --color-crit: var(--crit);
+  --color-crit-bg: var(--crit-bg);
+  --color-crit-br: var(--crit-br);
+  --color-sandbox-text: var(--sandbox-text);
+  --font-display: "Barlow Condensed", system-ui, sans-serif;
+  --font-sans: "Barlow", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 }
 
 body {
   margin: 0;
-  background: var(--page-plane);
-  color: var(--text-primary);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
 }
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Industry wireframe registration marks - square hairline frame with
+   corner tick marks, used on primary cards, figures, and the CTA button. */
+.blueprint {
+  position: relative;
+}
+.blueprint > .corner {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+.blueprint > .corner::before,
+.blueprint > .corner::after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+.blueprint > .corner::before { left: 5px; top: 0; width: 1px; height: 100%; }
+.blueprint > .corner::after { top: 5px; left: 0; width: 100%; height: 1px; }
+.blueprint > .corner.tl { top: -6px; left: -6px; }
+.blueprint > .corner.tr { top: -6px; right: -6px; }
+.blueprint > .corner.bl { bottom: -6px; left: -6px; }
+.blueprint > .corner.br { bottom: -6px; right: -6px; }
+
+details summary::-webkit-details-marker { display: none; }

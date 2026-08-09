@@ -46,4 +46,10 @@ export const api = {
 
   setBudget: (userId, category, amount) =>
     request("/budget", { method: "POST", body: { user_id: userId, category, amount } }),
+
+  checkAffordability: (userId, price, category, timing) =>
+    request("/affordability/check", { method: "POST", body: { user_id: userId, price, category, timing } }),
+
+  recommendBudgets: (userId, months = 6) =>
+    request("/budget/recommend", { method: "POST", body: { user_id: userId, months } }),
 };

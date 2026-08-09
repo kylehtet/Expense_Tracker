@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from app.affordability import check_purchase
 from app.budget import budget_status
 from app.categorize import categorize_transaction
 from app.config import IS_SANDBOX, PLAID_ENV
@@ -25,7 +26,9 @@ from app.db import (
     set_budget,
     upsert_transactions,
 )
+from app.explain import explain_verdict
 from app.plaid_client import create_link_token, exchange_public_token, fetch_transactions
+from app.recommend import recommend_budgets
 
 # Single-process, in-memory cooldown. Fine for the MVP's single-worker demo
 # deployment; move to a shared store (Redis, or a DB-backed timestamp) before
@@ -33,6 +36,16 @@ from app.plaid_client import create_link_token, exchange_public_token, fetch_tra
 # cooldown and the effective rate limit would multiply by worker count.
 SYNC_COOLDOWN_SECONDS = 60
 _last_sync_at: dict[str, datetime] = {}
+
+# Shorter cooldown than /sync (no Plaid call here, just an LLM call) - mainly
+# guards against a double-click firing two Claude requests for one check.
+AFFORDABILITY_COOLDOWN_SECONDS = 5
+_last_affordability_check_at: dict[str, datetime] = {}
+
+# A heavier LLM call (whole spending history, multiple categories) than the
+# affordability check, so a longer cooldown.
+RECOMMEND_COOLDOWN_SECONDS = 15
+_last_recommend_at: dict[str, datetime] = {}
 
 
 @asynccontextmanager
@@ -103,6 +116,37 @@ class ConfigOut(BaseModel):
     is_sandbox: bool
 
 
+class AffordabilityRequest(BaseModel):
+    user_id: str
+    price: float
+    category: str
+    timing: str
+
+
+class AffordabilityResponse(BaseModel):
+    verdict: str
+    explanation: str
+    explanation_source: str
+    math: dict
+
+
+class RecommendBudgetRequest(BaseModel):
+    user_id: str
+    months: int = 6
+
+
+class CategoryRecommendationOut(BaseModel):
+    category: str
+    recommended_budget: float
+    rationale: str
+
+
+class RecommendBudgetResponse(BaseModel):
+    recommendations: list[CategoryRecommendationOut]
+    summary: str
+    source: str
+
+
 def _check_sync_rate_limit(user_id: str) -> None:
     now = datetime.now(timezone.utc)
     last = _last_sync_at.get(user_id)
@@ -114,9 +158,39 @@ def _check_sync_rate_limit(user_id: str) -> None:
     _last_sync_at[user_id] = now
 
 
+def _check_affordability_rate_limit(user_id: str) -> None:
+    now = datetime.now(timezone.utc)
+    last = _last_affordability_check_at.get(user_id)
+    if last is not None:
+        elapsed = (now - last).total_seconds()
+        if elapsed < AFFORDABILITY_COOLDOWN_SECONDS:
+            retry_after = round(AFFORDABILITY_COOLDOWN_SECONDS - elapsed)
+            raise HTTPException(status_code=429, detail=f"Rate limited, retry after {retry_after}s")
+    _last_affordability_check_at[user_id] = now
+
+
+def _check_recommend_rate_limit(user_id: str) -> None:
+    now = datetime.now(timezone.utc)
+    last = _last_recommend_at.get(user_id)
+    if last is not None:
+        elapsed = (now - last).total_seconds()
+        if elapsed < RECOMMEND_COOLDOWN_SECONDS:
+            retry_after = round(RECOMMEND_COOLDOWN_SECONDS - elapsed)
+            raise HTTPException(status_code=429, detail=f"Rate limited, retry after {retry_after}s")
+    _last_recommend_at[user_id] = now
+
+
 def _current_month_range() -> tuple[str, str]:
     today = datetime.now(timezone.utc)
     return today.strftime("%Y-%m-01"), today.strftime("%Y-%m-%d")
+
+
+def _current_status(db: Session, user_id: str) -> dict:
+    start_date, end_date = _current_month_range()
+    transactions = get_transactions(db, user_id, start_date=start_date, end_date=end_date)
+    actual_spend = _sum_by_stored_category(transactions)
+    budgets = get_budgets(db, user_id)
+    return budget_status(budgets, actual_spend)
 
 
 def _sum_by_stored_category(transactions: list[TransactionRecord]) -> dict[str, float]:
@@ -124,6 +198,13 @@ def _sum_by_stored_category(transactions: list[TransactionRecord]) -> dict[str, 
     for t in transactions:
         spend[t.category] = spend.get(t.category, 0.0) + t.amount
     return {category: round(total, 2) for category, total in spend.items()}
+
+
+def _transactions_as_dicts(transactions: list[TransactionRecord]) -> list[dict]:
+    """Stored records already carry their category (computed once at sync
+    time) - include it so budget.spending_trend reuses it instead of trying
+    to re-derive one from raw Plaid fields these records don't have."""
+    return [{"date": t.date, "amount": t.amount, "category": t.category} for t in transactions]
 
 
 @app.get("/config", response_model=ConfigOut)
@@ -201,3 +282,39 @@ def get_budget_status(
 def create_or_update_budget(payload: SetBudgetRequest, db: Session = Depends(get_db)) -> BudgetOut:
     record = set_budget(db, payload.user_id, payload.category, payload.amount)
     return BudgetOut(category=record.category, amount=record.amount)
+
+
+@app.post("/affordability/check", response_model=AffordabilityResponse)
+def check_affordability(payload: AffordabilityRequest, db: Session = Depends(get_db)) -> AffordabilityResponse:
+    _check_affordability_rate_limit(payload.user_id)
+
+    if payload.price <= 0:
+        raise HTTPException(status_code=400, detail="price must be positive")
+
+    status = _current_status(db, payload.user_id)
+    try:
+        math = check_purchase(status, payload.price, payload.category, payload.timing)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    explained = explain_verdict(math)
+    return AffordabilityResponse(
+        verdict=math["verdict"],
+        explanation=explained["explanation"],
+        explanation_source=explained["source"],
+        math=math,
+    )
+
+
+@app.post("/budget/recommend", response_model=RecommendBudgetResponse)
+def recommend_budget(payload: RecommendBudgetRequest, db: Session = Depends(get_db)) -> RecommendBudgetResponse:
+    _check_recommend_rate_limit(payload.user_id)
+
+    transactions = get_transactions(db, payload.user_id)
+    budgets = get_budgets(db, payload.user_id)
+    result = recommend_budgets(_transactions_as_dicts(transactions), budgets, months=payload.months)
+    return RecommendBudgetResponse(
+        recommendations=result["recommendations"],
+        summary=result["summary"],
+        source=result["source"],
+    )

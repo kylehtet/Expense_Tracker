@@ -22,7 +22,7 @@ def monthly_spend_by_category(transactions: list) -> dict:
     transactions - this doesn't group by calendar month; see spending_trend."""
     spend: dict[str, float] = {}
     for txn in transactions:
-        category = categorize_transaction(txn)
+        category = txn.get("category") or categorize_transaction(txn)
         spend[category] = spend.get(category, 0.0) + float(txn["amount"])
     return {category: round(total, 2) for category, total in spend.items()}
 
@@ -75,7 +75,7 @@ def spending_trend(transactions: list, months: int) -> dict:
     monthly_totals: dict[str, dict[str, float]] = {}
     for txn in transactions:
         month = _month_key(txn["date"])
-        category = categorize_transaction(txn)
+        category = txn.get("category") or categorize_transaction(txn)
         bucket = monthly_totals.setdefault(month, {})
         bucket[category] = bucket.get(category, 0.0) + float(txn["amount"])
 

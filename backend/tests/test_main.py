@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -7,7 +8,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
-from app.main import SYNC_COOLDOWN_SECONDS, _last_sync_at, app
+from app.main import (
+    SYNC_COOLDOWN_SECONDS,
+    _last_affordability_check_at,
+    _last_recommend_at,
+    _last_sync_at,
+    app,
+)
 
 # StaticPool pins the pool to a single connection - without it, each pooled
 # connection to sqlite:///:memory: gets its own separate, empty database.
@@ -33,6 +40,8 @@ def _fresh_db_and_rate_limits():
     Base.metadata.drop_all(test_engine)
     Base.metadata.create_all(test_engine)
     _last_sync_at.clear()
+    _last_affordability_check_at.clear()
+    _last_recommend_at.clear()
     yield
 
 
@@ -226,3 +235,145 @@ class TestBudget:
     def test_defaults_to_current_month_when_no_dates_given(self, client):
         response = client.get("/budget/status", params={"user_id": "user-1"})
         assert response.status_code == 200
+
+
+class TestAffordabilityCheck:
+    def _seed_current_month(self, client):
+        _link_and_exchange(client)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": today,
+                "name": "AMC Theatres",
+                "amount": 402.0,
+                "personal_finance_category": {"primary": "ENTERTAINMENT"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value=raw):
+            client.post("/sync", json={"user_id": "user-1"})
+        client.post("/budget", json={"user_id": "user-1", "category": "Entertainment", "amount": 500.0})
+
+    def test_returns_verdict_and_math(self, client):
+        self._seed_current_month(client)
+        with patch(
+            "app.main.explain_verdict",
+            return_value={"explanation": "Tight but it fits.", "source": "ai", "error": None},
+        ):
+            response = client.post(
+                "/affordability/check",
+                json={"user_id": "user-1", "price": 480.0, "category": "Entertainment", "timing": "one_time"},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        # Only Entertainment is budgeted here, so the $480 purchase exceeds
+        # both the category and the entire (small, single-category) budget pool.
+        assert body["verdict"] == "over"
+        assert body["explanation"] == "Tight but it fits."
+        assert body["explanation_source"] == "ai"
+        assert body["math"]["category_left_before"] == 98.0
+
+    def test_rejects_non_positive_price(self, client):
+        self._seed_current_month(client)
+        response = client.post(
+            "/affordability/check",
+            json={"user_id": "user-1", "price": 0, "category": "Entertainment", "timing": "one_time"},
+        )
+        assert response.status_code == 400
+
+    def test_rejects_unknown_timing(self, client):
+        self._seed_current_month(client)
+        response = client.post(
+            "/affordability/check",
+            json={"user_id": "user-1", "price": 50, "category": "Entertainment", "timing": "yearly"},
+        )
+        assert response.status_code == 400
+
+    def test_works_for_a_user_with_no_budgets_or_transactions_yet(self, client):
+        response = client.post(
+            "/affordability/check",
+            json={"user_id": "brand-new-user", "price": 50, "category": "Food", "timing": "one_time"},
+        )
+        assert response.status_code == 200
+        # Nothing budgeted anywhere yet - nothing to be "over", so this
+        # shouldn't read as a rejection.
+        assert response.json()["verdict"] == "comfortable"
+
+    def test_second_check_within_cooldown_is_rate_limited(self, client):
+        self._seed_current_month(client)
+        with patch(
+            "app.main.explain_verdict", return_value={"explanation": "x", "source": "ai", "error": None}
+        ):
+            first = client.post(
+                "/affordability/check",
+                json={"user_id": "user-1", "price": 50, "category": "Entertainment", "timing": "one_time"},
+            )
+            second = client.post(
+                "/affordability/check",
+                json={"user_id": "user-1", "price": 50, "category": "Entertainment", "timing": "one_time"},
+            )
+        assert first.status_code == 200
+        assert second.status_code == 429
+
+
+class TestBudgetRecommend:
+    def test_no_history_returns_empty_recommendations(self, client):
+        response = client.post("/budget/recommend", json={"user_id": "brand-new-user"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["recommendations"] == []
+        assert body["source"] == "none"
+
+    def test_returns_recommendations_from_history(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-06-01",
+                "name": "Rent",
+                "amount": 1500.0,
+                "personal_finance_category": {"primary": "RENT_AND_UTILITIES"},
+            },
+            {
+                "transaction_id": "tx2",
+                "date": "2026-07-01",
+                "name": "Rent",
+                "amount": 1500.0,
+                "personal_finance_category": {"primary": "RENT_AND_UTILITIES"},
+            },
+        ]
+        with patch("app.main.fetch_transactions", return_value=raw):
+            client.post("/sync", json={"user_id": "user-1"})
+
+        with patch(
+            "app.main.recommend_budgets",
+            return_value={
+                "recommendations": [
+                    {"category": "Housing", "recommended_budget": 1500.0, "rationale": "Matches your last two months."}
+                ],
+                "summary": "One category with enough history to recommend.",
+                "source": "ai",
+                "error": None,
+            },
+        ) as mock_recommend:
+            response = client.post("/budget/recommend", json={"user_id": "user-1", "months": 6})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["source"] == "ai"
+        assert body["recommendations"][0]["category"] == "Housing"
+        # The transactions passed in should carry the pre-computed category,
+        # not force recommend_budgets to re-derive one from raw Plaid fields.
+        passed_transactions = mock_recommend.call_args[0][0]
+        assert all("category" in t for t in passed_transactions)
+
+    def test_second_call_within_cooldown_is_rate_limited(self, client):
+        with patch(
+            "app.main.recommend_budgets",
+            return_value={"recommendations": [], "summary": "x", "source": "none", "error": None},
+        ):
+            first = client.post("/budget/recommend", json={"user_id": "user-1"})
+            second = client.post("/budget/recommend", json={"user_id": "user-1"})
+        assert first.status_code == 200
+        assert second.status_code == 429

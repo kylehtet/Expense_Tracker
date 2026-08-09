@@ -1,0 +1,412 @@
+import { Corners } from "./Corners";
+
+const GITHUB_URL = "https://github.com/kylehtet/can_u_afford_it";
+
+const NAV_LINKS = [
+  { href: "#how", label: "How it works" },
+  { href: "#privacy", label: "Your data" },
+  { href: "#run", label: "Run it" },
+];
+
+// Demo data for the dashboard preview - illustrative only, not live figures.
+const PREVIEW_CATS = [
+  { name: "Housing", spent: 1450, budget: 1500, hue: "var(--cat-housing)" },
+  { name: "Food", spent: 612, budget: 700, hue: "var(--cat-food)" },
+  { name: "Entertainment", spent: 402, budget: 500, hue: "var(--cat-entertainment)" },
+  { name: "Transport", spent: 318, budget: 400, hue: "var(--cat-transport)" },
+  { name: "Other", spent: 268, budget: 900, hue: "var(--cat-other)" },
+  { name: "Subscriptions", spent: 164, budget: 150, hue: "var(--cat-subs)" },
+];
+const PACE = 0.74;
+const PREVIEW_TOTAL = PREVIEW_CATS.reduce((sum, c) => sum + c.spent, 0);
+const PREVIEW_MAX = Math.max(...PREVIEW_CATS.map((c) => c.spent));
+const PREVIEW_BUDGET = PREVIEW_CATS.reduce((sum, c) => sum + c.budget, 0);
+
+const STATUS_TOKEN = {
+  under: { fg: "var(--good)", bg: "var(--good-bg)", br: "var(--good-br)", label: "Under" },
+  on_track: { fg: "var(--warn)", bg: "var(--warn-bg)", br: "var(--warn-br)", label: "On track" },
+  over: { fg: "var(--crit)", bg: "var(--crit-bg)", br: "var(--crit-br)", label: "Over" },
+};
+
+function previewStatus(spent, budget) {
+  const ratio = spent / budget;
+  if (ratio > 1) return STATUS_TOKEN.over;
+  if (ratio > PACE) return STATUS_TOKEN.on_track;
+  return STATUS_TOKEN.under;
+}
+
+const STEPS = [
+  {
+    num: "01",
+    title: "Connect a bank",
+    body: "Plaid Link handles the login. Access is read-only: the app can see transactions and balances, and it cannot move money.",
+    tag: "Working",
+  },
+  {
+    num: "02",
+    title: "Sort into six categories",
+    body: "Housing, Food, Transport, Subscriptions, Entertainment, Other. Fixed on purpose — six buckets you will actually keep up with beat forty you abandon.",
+    tag: "Working",
+  },
+  {
+    num: "03",
+    title: "Set a budget, watch the pace",
+    body: "A monthly limit per category, with a marker for where you should be by today's date. Under, on track and over are the only three states.",
+    tag: "Working",
+  },
+  {
+    num: "04",
+    title: "Check what you can afford",
+    body: "Enter a purchase and see what it does to the month before you make it, not after — the numbers are pure arithmetic on your real budgets; an LLM only writes the plain-language explanation.",
+    tag: "Working",
+  },
+];
+
+const PRIVACY = [
+  {
+    label: "In this app's database",
+    title: "Budgets and synced transactions",
+    body: "Budgets and categorized transactions are stored server-side so your dashboard works between visits, encrypted at rest where it matters.",
+  },
+  {
+    label: "On the server, encrypted",
+    title: "The Plaid access token",
+    body: "Your bank's access token is encrypted before storage and never sent back to the browser or logged. It's never in a URL, a log line, or an API response.",
+  },
+  {
+    label: "Nowhere",
+    title: "Analytics, tracking, ad tech",
+    body: "No analytics, no tracking pixels, no third-party scripts on this page or in the app beyond Plaid itself. The source is public — check it.",
+  },
+];
+
+const INSTALL = `git clone ${GITHUB_URL}
+cd can_u_afford_it/backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+#   PLAID_CLIENT_ID=...
+#   PLAID_SECRET=...
+#   PLAID_ENV=sandbox
+#   ENCRYPTION_KEY=...   (see .env.example to generate one)
+uvicorn app.main:app --reload --port 8000
+
+# in a second terminal
+cd can_u_afford_it/frontend
+npm install
+npm run dev             # http://localhost:5173`;
+
+function LogoMark() {
+  return (
+    <span className="relative block h-[18px] w-[18px] border-[1.5px] border-accent-deep">
+      <span className="absolute bottom-0.5 left-0.5 h-[5px] w-[3px] bg-accent-deep" />
+      <span className="absolute bottom-0.5 left-[7.5px] h-[11px] w-[3px] bg-accent-deep" />
+      <span className="absolute bottom-0.5 left-[13px] h-[8px] w-[3px] bg-accent-deep" />
+    </span>
+  );
+}
+
+function DashboardPreview() {
+  return (
+    <div className="blueprint relative border border-hairline bg-ground">
+      <Corners />
+      <div className="flex items-center gap-2.5 border-b border-warn-br bg-warn-bg px-[26px] py-[11px] text-[13px] text-sandbox-text">
+        <span className="h-[7px] w-[7px] flex-none rounded-full bg-warn" />
+        <strong className="font-semibold">Demo mode</strong>
+        <span>simulated bank data — the sandbox indicator is always visible</span>
+      </div>
+      <div className="grid grid-cols-1 gap-px bg-rule md:grid-cols-[1.25fr_1fr]">
+        <div className="bg-ground px-7 py-[26px] pb-[30px]">
+          <div className="mb-2.5 font-mono text-[10px] font-medium uppercase tracking-[.14em] text-ink-faint">
+            August 2026 &middot; to date
+          </div>
+          <div className="mb-[26px] flex items-baseline gap-3.5">
+            <span className="num font-display text-[42px] font-semibold text-ink">
+              ${PREVIEW_TOTAL.toLocaleString()}
+            </span>
+            <span className="text-[14px] text-ink-muted">of ${PREVIEW_BUDGET.toLocaleString()} budgeted</span>
+          </div>
+          <div className="flex flex-col gap-[13px]">
+            {PREVIEW_CATS.map((c) => (
+              <div key={c.name} className="grid grid-cols-[104px_1fr_82px] items-center gap-[13px]">
+                <span className="truncate text-[13.5px] text-ink">{c.name}</span>
+                <span className="relative block h-[18px] bg-track">
+                  <span
+                    className="absolute inset-y-0 left-0 bg-accent"
+                    style={{ width: `${(c.spent / PREVIEW_MAX) * 100}%` }}
+                  />
+                </span>
+                <span className="num text-right text-[13.5px] font-medium text-ink">
+                  ${c.spent.toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 flex h-[22px] w-full border border-hairline">
+            {PREVIEW_CATS.map((c) => (
+              <span
+                key={c.name}
+                className="block"
+                style={{ width: `${(c.spent / PREVIEW_TOTAL) * 100}%`, background: c.hue }}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="bg-ground px-7 py-[26px] pb-[30px]">
+          <div className="mb-3.5 font-display text-[15px] font-semibold uppercase tracking-[.07em] text-ink">
+            Budget progress
+          </div>
+          <div className="flex flex-col">
+            {PREVIEW_CATS.map((c) => {
+              const token = previewStatus(c.spent, c.budget);
+              const pct = Math.min(c.spent / c.budget, 1);
+              return (
+                <div key={c.name} className="flex flex-col gap-2 border-t border-rule py-[13px]">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-[14px] text-ink">{c.name}</span>
+                    <span
+                      className="border font-display text-[10.5px] font-semibold uppercase tracking-[.08em]"
+                      style={{ color: token.fg, background: token.bg, borderColor: token.br, padding: "5px 8px" }}
+                    >
+                      {token.label}
+                    </span>
+                  </div>
+                  <span className="relative block h-[7px] bg-track">
+                    <span
+                      className="absolute inset-y-0 left-0"
+                      style={{ width: `${pct * 100}%`, background: token.fg }}
+                    />
+                    <span
+                      className="absolute -inset-y-[3px] w-px bg-ink opacity-45"
+                      style={{ left: `${PACE * 100}%` }}
+                    />
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HowItWorksSheet() {
+  return (
+    <div className="blueprint relative border border-hairline">
+      <Corners />
+      <div className="flex flex-wrap items-stretch border-b border-hairline font-display text-[12.5px] font-semibold uppercase tracking-[.08em]">
+        <span className="min-w-[16ch] flex-1 px-6 py-3">Expense Tracker — personal finance, self-hosted</span>
+        <span className="whitespace-nowrap border-l border-hairline px-6 py-3 text-ink-muted">Doc ET-01</span>
+        <span className="whitespace-nowrap border-l border-hairline px-6 py-3 text-ink-muted">Rev. 2026.08</span>
+        <span className="whitespace-nowrap border-l border-hairline px-6 py-3 text-ink-muted">Sheet 1 of 1</span>
+      </div>
+      {STEPS.map((s, i) => (
+        <div
+          key={s.num}
+          className="grid grid-cols-2 gap-4 px-6 py-[22px] md:grid-cols-[64px_210px_1fr_140px] md:items-baseline md:gap-6"
+          style={{ borderBottom: i === STEPS.length - 1 ? "0" : "1px solid var(--rule)" }}
+        >
+          <span className="num text-[13px] text-accent-deep">{s.num}</span>
+          <span className="font-display text-[19px] font-semibold uppercase tracking-[.03em] text-ink">
+            {s.title}
+          </span>
+          <span className="col-span-2 text-[14.5px] leading-[1.6] text-ink md:col-span-1">{s.body}</span>
+          <span
+            className="justify-self-start whitespace-nowrap font-display text-[10.5px] font-semibold uppercase tracking-[.08em]"
+            style={
+              s.planned
+                ? { padding: "6px 9px", color: "var(--ink-muted)", border: "1px dashed var(--field)" }
+                : { padding: "6px 9px", color: "var(--accent-deep)", background: "var(--accent-tint)", border: "1px solid var(--accent)" }
+            }
+          >
+            {s.tag}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function LandingPage({ onTryDemo }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--ground)" }}>
+      <header className="sticky top-0 z-10 flex items-center gap-7 border-b border-hairline bg-surface px-5 sm:px-[72px]">
+        <div className="flex items-center gap-2.5 py-[18px]">
+          <LogoMark />
+          <span className="font-display text-[18px] font-semibold tracking-[.03em] text-ink">
+            EXPENSE TRACKER
+          </span>
+        </div>
+        <nav className="ml-3 hidden gap-[22px] sm:flex">
+          {NAV_LINKS.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              className="whitespace-nowrap font-display text-[13px] font-semibold uppercase tracking-[.07em] text-ink no-underline hover:text-accent-deep"
+            >
+              {link.label}
+            </a>
+          ))}
+        </nav>
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="blueprint relative ml-auto whitespace-nowrap bg-accent-deep px-[18px] py-3 font-display text-[13px] font-semibold uppercase tracking-[.05em] text-ground no-underline hover:bg-accent-press"
+        >
+          <Corners />
+          Get the code
+        </a>
+      </header>
+
+      <section className="mx-auto max-w-[1200px] px-5 pb-[72px] pt-24 sm:px-[72px]">
+        <h1 className="m-0 font-display text-[clamp(48px,7vw,92px)] font-semibold uppercase leading-[1.04] tracking-[.01em] text-ink">
+          <span className="block">Your spending,</span>
+          <span className="block">in six categories,</span>
+          <span className="block text-accent-deep">on your own machine.</span>
+        </h1>
+        <p className="m-0 mt-8 max-w-[62ch] text-[17px] leading-[1.6] text-ink">
+          Expense Tracker syncs transactions through Plaid, sorts them into six categories and
+          tracks them against budgets you set. It's free and open source, and it keeps your data
+          in your own database rather than someone else's.
+        </p>
+        <div className="mt-8 flex flex-wrap gap-3">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="blueprint relative bg-accent-deep px-[26px] py-4 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ground no-underline hover:bg-accent-press"
+          >
+            <Corners />
+            Get the code
+          </a>
+          <button
+            onClick={onTryDemo}
+            className="border border-field bg-transparent px-[26px] py-4 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ink hover:bg-sunken"
+          >
+            Try the demo
+          </button>
+        </div>
+        <p className="m-0 mt-4 font-mono text-[13px] text-ink-faint">
+          MIT licensed &middot; React + Vite + FastAPI &middot; no account, no subscription
+        </p>
+      </section>
+
+      <section className="mx-auto max-w-[1200px] px-5 pb-24 sm:px-[72px]">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-4">
+          <span className="font-display text-[13px] font-semibold uppercase tracking-[.08em] text-accent-deep">
+            The dashboard
+          </span>
+          <span className="font-mono text-[12.5px] text-ink-faint">demo data &middot; August 2026</span>
+        </div>
+        <hr className="mb-6 h-px border-0 bg-hairline" />
+        <DashboardPreview />
+      </section>
+
+      <section id="how" className="mx-auto max-w-[1200px] scroll-mt-[76px] px-5 pb-24 sm:px-[72px]">
+        <span className="mb-3 block font-display text-[13px] font-semibold uppercase tracking-[.08em] text-accent-deep">
+          Sheet 01 &middot; How it works
+        </span>
+        <hr className="mb-7 h-px border-0 bg-hairline" />
+        <HowItWorksSheet />
+      </section>
+
+      <section id="privacy" className="mx-auto max-w-[1200px] scroll-mt-[76px] px-5 pb-24 sm:px-[72px]">
+        <span className="mb-3 block font-display text-[13px] font-semibold uppercase tracking-[.08em] text-accent-deep">
+          02 &middot; What is stored, and where it goes
+        </span>
+        <hr className="mb-7 h-px border-0 bg-hairline" />
+        <p className="m-0 mb-7 max-w-[64ch] text-[16px] leading-[1.6] text-ink">
+          There's no separate Expense Tracker account. You run the server yourself, so the only
+          parties in the loop are you, your bank, and Plaid.
+        </p>
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+          {PRIVACY.map((p) => (
+            <div key={p.title} className="blueprint relative border border-hairline p-[22px] pb-6">
+              <Corners />
+              <div className="mb-3 font-mono text-[10px] font-medium uppercase tracking-[.12em] text-ink-faint">
+                {p.label}
+              </div>
+              <div className="mb-2.5 font-display text-[21px] font-semibold uppercase tracking-[.03em] text-ink">
+                {p.title}
+              </div>
+              <p className="m-0 text-[14px] leading-[1.6] text-ink">{p.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="run" className="mx-auto max-w-[1200px] scroll-mt-[76px] px-5 pb-24 sm:px-[72px]">
+        <span className="mb-3 block font-display text-[13px] font-semibold uppercase tracking-[.08em] text-accent-deep">
+          03 &middot; Run it yourself
+        </span>
+        <hr className="mb-7 h-px border-0 bg-hairline" />
+        <div className="grid grid-cols-1 items-start gap-9 lg:grid-cols-[1fr_1.1fr]">
+          <div>
+            <h2 className="m-0 mb-3.5 font-display text-[34px] font-semibold uppercase leading-[1.06] tracking-[.02em] text-ink">
+              Two services and a Plaid key
+            </h2>
+            <p className="m-0 mb-5 max-w-[52ch] text-[15.5px] leading-[1.6] text-ink">
+              Clone it, add your own Plaid sandbox credentials, and run the backend and frontend
+              side by side on localhost. Sandbox mode needs no real bank and no card; the amber
+              demo banner stays up the whole time you're in it.
+            </p>
+            <p className="m-0 max-w-[52ch] text-[14px] leading-[1.6] text-ink-muted">
+              Going live means swapping the Plaid environment variable for production keys and
+              generating a real <code className="font-mono text-[13px]">ENCRYPTION_KEY</code>.
+              Nothing else in the app changes.
+            </p>
+          </div>
+          <pre className="m-0 overflow-x-auto whitespace-pre px-[26px] py-6 font-mono text-[13px] leading-[1.85]" style={{ background: "#1d1f20", color: "#d6e4f0" }}>
+            {INSTALL}
+          </pre>
+        </div>
+      </section>
+
+      <footer className="border-t border-hairline bg-sunken">
+        <div className="mx-auto flex max-w-[1200px] flex-col gap-4 px-5 py-8 pb-10 sm:px-[72px]">
+          <p className="m-0 max-w-[92ch] text-[13.5px] leading-[1.6] text-ink-muted">
+            This is a personal project, not a bank or licensed financial service. It shows you
+            your own transactions and the budgets you set; it does not give financial advice,
+            hold money, or move it.
+          </p>
+          <details>
+            <summary className="cursor-pointer list-none font-display text-[13px] font-semibold uppercase tracking-[.07em] text-accent-deep">
+              What data is stored, and where it goes &#8964;
+            </summary>
+            <p className="m-0 mt-3 max-w-[96ch] text-[14px] leading-[1.65] text-ink">
+              Your Plaid access token is encrypted and held by the copy of the server you run.
+              Transactions and budgets are stored in that server's database. There's no analytics
+              service, no tracking pixel, and no third-party script on this page or in the app.
+              The storage code is in{" "}
+              <span className="bg-[color-mix(in_srgb,var(--ink)_10%,transparent)] px-1.5 py-0.5 font-mono text-[13px]">
+                backend/app/db.py
+              </span>{" "}
+              — read it before you trust it.
+            </p>
+          </details>
+          <div className="flex flex-wrap gap-[22px] pt-1.5">
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="font-display text-[12.5px] font-semibold uppercase tracking-[.07em] text-ink no-underline hover:text-accent-deep"
+            >
+              GitHub
+            </a>
+            <a
+              href={`${GITHUB_URL}/issues`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-display text-[12.5px] font-semibold uppercase tracking-[.07em] text-ink no-underline hover:text-accent-deep"
+            >
+              Issues
+            </a>
+            <span className="ml-auto font-mono text-[12.5px] text-ink-faint">&copy; 2026</span>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
