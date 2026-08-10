@@ -36,12 +36,26 @@ function averageMonthlySpend(transactions) {
   return averages;
 }
 
-export function BudgetSettings({ userId, status, transactions, onSaved }) {
+export function BudgetSettings({ status, transactions, onSaved, onDisconnect, isSandbox }) {
   const [drafts, setDrafts] = useState({});
   const [saving, setSaving] = useState(false);
   const [recommendState, setRecommendState] = useState("idle"); // idle | loading | error
   const [recommendError, setRecommendError] = useState(null);
   const [recommendation, setRecommendation] = useState(null);
+  const [disconnectState, setDisconnectState] = useState("idle"); // idle | confirming | disconnecting | error
+
+  const disconnect = async () => {
+    if (disconnectState !== "confirming") {
+      setDisconnectState("confirming");
+      return;
+    }
+    setDisconnectState("disconnecting");
+    try {
+      await onDisconnect();
+    } catch {
+      setDisconnectState("error");
+    }
+  };
 
   const averages = useMemo(() => averageMonthlySpend(transactions), [transactions]);
 
@@ -67,7 +81,7 @@ export function BudgetSettings({ userId, status, transactions, onSaved }) {
     setRecommendState("loading");
     setRecommendError(null);
     try {
-      const result = await api.recommendBudgets(userId, 6);
+      const result = await api.recommendBudgets(6);
       setRecommendation(result);
       setRecommendState("idle");
     } catch (err) {
@@ -98,7 +112,7 @@ export function BudgetSettings({ userId, status, transactions, onSaved }) {
       for (const category of Object.keys(drafts)) {
         const amount = Number(drafts[category]);
         if (Number.isFinite(amount) && amount >= 0) {
-          await api.setBudget(userId, category, amount);
+          await api.setBudget(category, amount);
         }
       }
       setDrafts({});
@@ -238,6 +252,51 @@ export function BudgetSettings({ userId, status, transactions, onSaved }) {
             </button>
           </span>
         </div>
+
+        {onDisconnect && (
+          <div className="mt-8 border border-crit-br bg-crit-bg p-4">
+            <div className="mb-1.5 font-mono text-[10px] font-medium uppercase tracking-[.12em] text-crit">
+              Connected account
+            </div>
+            <p className="m-0 mb-3 text-[13px] leading-[1.55] text-ink">
+              Disconnects your bank from Expense Tracker and clears synced transactions from this
+              app's database. Plaid is notified to revoke access.
+              {!isSandbox && (
+                <>
+                  {" "}
+                  Note: this does not free up a slot on your Plaid Trial plan — that connection is
+                  still counted against your limit even after disconnecting.
+                </>
+              )}
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={disconnect}
+                disabled={disconnectState === "disconnecting"}
+                className="whitespace-nowrap border border-crit bg-transparent px-4 py-[9px] font-display text-[13px] font-semibold uppercase tracking-[.04em] text-crit hover:bg-crit-bg disabled:opacity-50"
+              >
+                {disconnectState === "disconnecting"
+                  ? "Disconnecting…"
+                  : disconnectState === "confirming"
+                    ? "Click again to confirm"
+                    : "Disconnect bank account"}
+              </button>
+              {disconnectState === "confirming" && (
+                <button
+                  type="button"
+                  onClick={() => setDisconnectState("idle")}
+                  className="whitespace-nowrap font-display text-[12.5px] font-semibold uppercase tracking-[.04em] text-ink-muted hover:text-ink"
+                >
+                  Cancel
+                </button>
+              )}
+              {disconnectState === "error" && (
+                <span className="text-[12.5px] text-crit">Couldn't disconnect. Try again.</span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

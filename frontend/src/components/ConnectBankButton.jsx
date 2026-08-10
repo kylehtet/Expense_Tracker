@@ -7,16 +7,17 @@ const POINTS = [
   "Read-only access through Plaid — transactions in, nothing out.",
   "Sorted into six fixed categories you can budget against.",
   "Your access token stays on your own server; budgets stay in your browser.",
+  "Your bank login is handled directly by Plaid — this app never sees or stores your bank password.",
 ];
 
-export function ConnectBankButton({ userId, onLinked, isSandbox }) {
+export function ConnectBankButton({ onLinked, isSandbox }) {
   const [linkToken, setLinkToken] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | idle | linking | error
 
   useEffect(() => {
     let cancelled = false;
     api
-      .createLinkToken(userId)
+      .createLinkToken()
       .then(({ link_token }) => {
         if (!cancelled) {
           setLinkToken(link_token);
@@ -27,20 +28,20 @@ export function ConnectBankButton({ userId, onLinked, isSandbox }) {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, []);
 
   const onSuccess = useCallback(
     async (publicToken) => {
       setStatus("linking");
       try {
-        await api.exchangePublicToken(userId, publicToken);
+        await api.exchangePublicToken(publicToken);
         onLinked();
         setStatus("idle");
       } catch {
         setStatus("error");
       }
     },
-    [userId, onLinked]
+    [onLinked]
   );
 
   const { open, ready } = usePlaidLink({ token: linkToken, onSuccess });

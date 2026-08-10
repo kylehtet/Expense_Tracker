@@ -125,3 +125,32 @@ class TestExplainVerdict:
             explain_verdict(FACTS)
 
         log_usage.assert_called_once_with("explain_verdict", "claude-sonnet-5", input_tokens=0, output_tokens=0, cached=True)
+
+    def test_retrieved_facts_are_included_in_the_prompt(self):
+        retrieved = [{"text": "The average 30 year mortgage rate is 6.8% as of 2026-08-01.", "category": "mortgage_rate", "source": "FRED", "stale": False}]
+        with patch("app.explain._get_client") as get_client:
+            get_client.return_value.messages.create.return_value = _mock_response("ok")
+            explain_verdict(FACTS, retrieved_facts=retrieved)
+
+        user_message = get_client.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "6.8%" in user_message
+
+    def test_no_retrieved_facts_omits_the_reference_section(self):
+        with patch("app.explain._get_client") as get_client:
+            get_client.return_value.messages.create.return_value = _mock_response("ok")
+            explain_verdict(FACTS, retrieved_facts=None)
+
+        user_message = get_client.return_value.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "Reference facts" not in user_message
+
+    def test_different_retrieved_facts_are_not_cache_collisions(self):
+        with patch("app.explain._get_client") as get_client:
+            get_client.return_value.messages.create.side_effect = [
+                _mock_response("Without facts."),
+                _mock_response("With facts."),
+            ]
+            without = explain_verdict(FACTS, retrieved_facts=None)
+            with_facts = explain_verdict(FACTS, retrieved_facts=[{"text": "x", "category": "mortgage_rate", "source": "FRED", "stale": False}])
+
+        assert get_client.return_value.messages.create.call_count == 2
+        assert without["explanation"] != with_facts["explanation"]

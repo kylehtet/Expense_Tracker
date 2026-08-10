@@ -16,8 +16,12 @@ FEATURE = "explain_verdict"
 SYSTEM_PROMPT = (
     "Write a 1-3 sentence, direct, concrete plain-language explanation of a "
     "personal finance affordability check, using only the exact pre-computed "
-    "numbers given - never invent, round differently, or add a number. No "
-    "financial advice or recommendations, and never use the word 'advice'."
+    "numbers given - never invent, round differently, or add a number. If "
+    "reference facts are given (mortgage rates, property tax, cost of living), "
+    "mention whichever one is most relevant to putting this purchase in "
+    "context, using only the figures provided - skip them entirely only if "
+    "genuinely none apply. No financial advice or recommendations, and never "
+    "use the word 'advice'."
 )
 
 VERDICT_LABEL = {
@@ -40,7 +44,7 @@ def _fact_line(label: str, value) -> str:
     return f"{label}: {'no budget set' if value is None else value}"
 
 
-def _build_user_message(facts: dict) -> str:
+def _build_user_message(facts: dict, retrieved_facts: list[dict] | None = None) -> str:
     lines = [
         f"Purchase: ${facts['price']:.2f} ({facts['timing']}) in {facts['category']}.",
         f"Verdict: {VERDICT_LABEL.get(facts['verdict'], facts['verdict'])}",
@@ -55,6 +59,9 @@ def _build_user_message(facts: dict) -> str:
         lines.append(f"Effect on daily spending pace: {facts['effect_on_pace_pct']:+.1f}%")
     if facts["timing"] != "split_3":
         lines.append(f"Split over 3 months instead would be: ${facts['split_monthly']:.2f}/mo")
+    if retrieved_facts:
+        lines.append("\nReference facts (use only if relevant, cite nothing beyond the number itself):")
+        lines.extend(f"- {f['text']}" for f in retrieved_facts)
     lines.append("\nWrite the 1-3 sentence explanation now.")
     return "\n".join(lines)
 
@@ -83,8 +90,8 @@ def _fallback_explanation(facts: dict) -> str:
     )
 
 
-def explain_verdict(facts: dict) -> dict:
-    key = llm_cache.cache_key(FEATURE, facts)
+def explain_verdict(facts: dict, retrieved_facts: list[dict] | None = None) -> dict:
+    key = llm_cache.cache_key(FEATURE, facts, retrieved_facts)
     cached = llm_cache.get(key)
     if cached is not None:
         log_usage(FEATURE, MODEL, input_tokens=0, output_tokens=0, cached=True)
@@ -93,9 +100,9 @@ def explain_verdict(facts: dict) -> dict:
     try:
         response = _get_client().messages.create(
             model=MODEL,
-            max_tokens=150,
+            max_tokens=200,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": _build_user_message(facts)}],
+            messages=[{"role": "user", "content": _build_user_message(facts, retrieved_facts)}],
         )
         text = next((b.text for b in response.content if b.type == "text"), "").strip()
         if not text:

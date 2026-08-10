@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
-from sqlalchemy import Float, String, UniqueConstraint, create_engine, select
+from sqlalchemy import Float, String, UniqueConstraint, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from app.config import DATABASE_URL
@@ -48,6 +48,40 @@ class TransactionRecord(Base):
     category: Mapped[str] = mapped_column(String)
 
 
+class ProductionLinkEvent(Base):
+    """One row per successful Plaid item link while running against Plaid
+    Production (Trial plan). Append-only and never deleted by a disconnect -
+    Trial plan connection slots don't free up when an Item is removed, so
+    this needs to track lifetime usage, not "currently connected" count."""
+
+    __tablename__ = "production_link_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
+
+
+class GoalRecord(Base):
+    """A savings goal (e.g. "PS5", "Flight to Tokyo"). monthly_savings_capacity
+    is the deterministic savings-capacity estimate computed at creation time
+    (see app.goal_tracker) - the original "plan" that later health checks
+    compare actual spending pace against, so a goal's baseline doesn't
+    silently drift every time its health is recomputed."""
+
+    __tablename__ = "goals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    name: Mapped[str] = mapped_column(String)
+    target_amount: Mapped[float] = mapped_column(Float)
+    target_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    current_saved: Mapped[float] = mapped_column(Float, default=0.0)
+    category: Mapped[str] = mapped_column(String)
+    monthly_savings_capacity: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
+    status: Mapped[str] = mapped_column(String, default="active")
+
+
 class BudgetRecord(Base):
     __tablename__ = "budgets"
     __table_args__ = (UniqueConstraint("user_id", "category", name="uq_budget_user_category"),)
@@ -83,6 +117,34 @@ def save_item(db: Session, user_id: str, access_token: str) -> None:
 def get_access_token(db: Session, user_id: str) -> Optional[str]:
     item = db.scalar(select(Item).where(Item.user_id == user_id))
     return decrypt(item.access_token_encrypted) if item else None
+
+
+def delete_item(db: Session, user_id: str) -> Optional[str]:
+    """Removes the linked Item for user_id, returning its decrypted access
+    token (so the caller can revoke it with Plaid before it's gone locally),
+    or None if there wasn't one."""
+    item = db.scalar(select(Item).where(Item.user_id == user_id))
+    if item is None:
+        return None
+    access_token = decrypt(item.access_token_encrypted)
+    db.delete(item)
+    db.commit()
+    return access_token
+
+
+def delete_transactions_for_user(db: Session, user_id: str) -> int:
+    result = db.execute(delete(TransactionRecord).where(TransactionRecord.user_id == user_id))
+    db.commit()
+    return result.rowcount
+
+
+def record_production_link(db: Session, user_id: str) -> None:
+    db.add(ProductionLinkEvent(user_id=user_id))
+    db.commit()
+
+
+def count_production_links(db: Session) -> int:
+    return db.scalar(select(func.count()).select_from(ProductionLinkEvent)) or 0
 
 
 def upsert_transactions(db: Session, user_id: str, categorized_transactions: list[dict]) -> int:
@@ -148,3 +210,54 @@ def set_budget(db: Session, user_id: str, category: str, amount: float) -> Budge
 def get_budgets(db: Session, user_id: str) -> dict[str, float]:
     rows = db.scalars(select(BudgetRecord).where(BudgetRecord.user_id == user_id))
     return {row.category: row.amount for row in rows}
+
+
+def create_goal(
+    db: Session,
+    user_id: str,
+    name: str,
+    target_amount: float,
+    category: str,
+    monthly_savings_capacity: float,
+    target_date: Optional[str] = None,
+    current_saved: float = 0.0,
+) -> GoalRecord:
+    goal = GoalRecord(
+        user_id=user_id,
+        name=name,
+        target_amount=target_amount,
+        category=category,
+        monthly_savings_capacity=monthly_savings_capacity,
+        target_date=target_date,
+        current_saved=current_saved,
+    )
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+    return goal
+
+
+def get_goals(db: Session, user_id: str, status: Optional[str] = None) -> list[GoalRecord]:
+    query = select(GoalRecord).where(GoalRecord.user_id == user_id)
+    if status:
+        query = query.where(GoalRecord.status == status)
+    return list(db.scalars(query.order_by(GoalRecord.created_at.desc())))
+
+
+def get_goal(db: Session, user_id: str, goal_id: int) -> Optional[GoalRecord]:
+    return db.scalar(select(GoalRecord).where(GoalRecord.user_id == user_id, GoalRecord.id == goal_id))
+
+
+def update_goal(db: Session, user_id: str, goal_id: int, **fields) -> Optional[GoalRecord]:
+    goal = get_goal(db, user_id, goal_id)
+    if goal is None:
+        return None
+    for key, value in fields.items():
+        setattr(goal, key, value)
+    db.commit()
+    db.refresh(goal)
+    return goal
+
+
+def abandon_goal(db: Session, user_id: str, goal_id: int) -> Optional[GoalRecord]:
+    return update_goal(db, user_id, goal_id, status="abandoned")

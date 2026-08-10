@@ -11,3 +11,4 @@ SQLAlchemy==2.0.51
 cryptography==50.0.0
 pytest==9.1.1
 httpx2==2.9.1
+firebase-admin==7.5.0

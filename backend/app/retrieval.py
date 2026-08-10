@@ -246,6 +246,35 @@ def retrieve_context(query: str, location: str = "", k: int = 5) -> list[dict]:
     return candidates[:k]
 
 
+def retrieve_housing_context(location: str = "", k: int = 3) -> list[dict]:
+    """Facts relevant to a housing affordability check: current mortgage rates
+    (always - they're national, so no query can fail to surface them) plus the
+    top local property-tax/cost-of-living facts for `location` if given.
+    Mortgage rates are fetched directly rather than through similarity search
+    since they're unconditionally relevant, not just the closest match."""
+    facts = [
+        {
+            "text": (
+                f"The average {rate['label'].replace('_', ' ')} mortgage interest rate is "
+                f"{rate['rate_percent']}% as of {rate['as_of_date']}."
+            ),
+            "category": "mortgage_rate",
+            "source": rate["source"],
+            "stale": rate["stale"],
+        }
+        for rate in fetch_mortgage_rates()
+    ]
+
+    if location:
+        for r in retrieve_context("property tax insurance cost of living", location=location, k=k):
+            if r["category"] != "mortgage_rate":
+                facts.append(
+                    {"text": r["text"], "category": r["category"], "source": r["source"], "stale": r["stale"]}
+                )
+
+    return facts
+
+
 if __name__ == "__main__":
     count = ingest()
     print(f"Ingested {count} documents into Chroma collection '{COLLECTION_NAME}'.")

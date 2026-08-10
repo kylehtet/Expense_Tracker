@@ -8,6 +8,7 @@ from plaid.api import plaid_api
 from plaid.model.accounts_balance_get_request import AccountsBalanceGetRequest
 from plaid.model.country_code import CountryCode
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
+from plaid.model.item_remove_request import ItemRemoveRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
@@ -52,6 +53,13 @@ def exchange_public_token(public_token: str) -> str:
     request = ItemPublicTokenExchangeRequest(public_token=public_token)
     response = _get_client().item_public_token_exchange(request)
     return response.access_token
+
+
+def remove_item(access_token: str) -> None:
+    """Revokes an Item with Plaid. Note: for Trial/Limited Production plans,
+    this frees nothing against the connection-count cap - it only stops the
+    Item from syncing further and invalidates its access token."""
+    _get_client().item_remove(ItemRemoveRequest(access_token=access_token))
 
 
 def fetch_transactions(access_token: str, start_date: str | None = None, end_date: str | None = None) -> list[dict]:

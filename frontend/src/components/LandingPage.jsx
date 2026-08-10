@@ -249,48 +249,54 @@ export function LandingPage({ onTryDemo }) {
             </a>
           ))}
         </nav>
-        <a
-          href={GITHUB_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="blueprint relative ml-auto whitespace-nowrap bg-accent-deep px-[18px] py-3 font-display text-[13px] font-semibold uppercase tracking-[.05em] text-ground no-underline hover:bg-accent-press"
-        >
-          <Corners />
-          Get the code
-        </a>
+        <span className="ml-auto flex items-center gap-4">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden whitespace-nowrap font-display text-[12.5px] font-semibold uppercase tracking-[.06em] text-ink-muted no-underline hover:text-accent-deep sm:inline"
+          >
+            View source
+          </a>
+          <button
+            onClick={onTryDemo}
+            className="blueprint relative whitespace-nowrap bg-accent-deep px-[18px] py-3 font-display text-[13px] font-semibold uppercase tracking-[.05em] text-ground hover:bg-accent-press"
+          >
+            <Corners />
+            Connect your bank
+          </button>
+        </span>
       </header>
 
       <section className="mx-auto max-w-[1200px] px-5 pb-[72px] pt-24 sm:px-[72px]">
         <h1 className="m-0 font-display text-[clamp(48px,7vw,92px)] font-semibold uppercase leading-[1.04] tracking-[.01em] text-ink">
           <span className="block">Your spending,</span>
           <span className="block">in six categories,</span>
-          <span className="block text-accent-deep">on your own machine.</span>
+          <span className="block text-accent-deep">synced from your bank.</span>
         </h1>
         <p className="m-0 mt-8 max-w-[62ch] text-[17px] leading-[1.6] text-ink">
-          Expense Tracker syncs transactions through Plaid, sorts them into six categories and
-          tracks them against budgets you set. It's free and open source, and it keeps your data
-          in your own database rather than someone else's.
+          Connect your bank through Plaid and Expense Tracker sorts your transactions into six
+          categories, tracks them against budgets you set, and tells you what you can actually
+          afford before you spend. It's free to use, and the source is public — nothing about how
+          it handles your data is hidden.
         </p>
-        <div className="mt-8 flex flex-wrap gap-3">
+        <div className="mt-8 flex flex-wrap items-center gap-5">
+          <button
+            onClick={onTryDemo}
+            className="blueprint relative bg-accent-deep px-[26px] py-4 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ground hover:bg-accent-press"
+          >
+            <Corners />
+            Connect your bank
+          </button>
           <a
             href={GITHUB_URL}
             target="_blank"
             rel="noreferrer"
-            className="blueprint relative bg-accent-deep px-[26px] py-4 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ground no-underline hover:bg-accent-press"
+            className="whitespace-nowrap font-display text-[13px] font-semibold uppercase tracking-[.05em] text-ink-muted no-underline hover:text-accent-deep"
           >
-            <Corners />
-            Get the code
+            View source &rarr;
           </a>
-          <button
-            onClick={onTryDemo}
-            className="border border-field bg-transparent px-[26px] py-4 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ink hover:bg-sunken"
-          >
-            Try the demo
-          </button>
         </div>
-        <p className="m-0 mt-4 font-mono text-[13px] text-ink-faint">
-          MIT licensed &middot; React + Vite + FastAPI &middot; no account, no subscription
-        </p>
       </section>
 
       <section className="mx-auto max-w-[1200px] px-5 pb-24 sm:px-[72px]">
@@ -386,6 +392,9 @@ export function LandingPage({ onTryDemo }) {
               — read it before you trust it.
             </p>
           </details>
+          <p className="m-0 font-mono text-[12.5px] text-ink-faint">
+            MIT licensed &middot; React + Vite + FastAPI &middot; free to use
+          </p>
           <div className="flex flex-wrap gap-[22px] pt-1.5">
             <a
               href={GITHUB_URL}

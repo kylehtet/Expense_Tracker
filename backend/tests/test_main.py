@@ -8,6 +8,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
+from app.firebase_auth import require_firebase_auth
+from app.goal_tracker import compute_monthly_savings_capacity
 from app.main import (
     SYNC_COOLDOWN_SECONDS,
     _last_affordability_check_at,
@@ -23,6 +25,8 @@ test_engine = create_engine(
 )
 TestSessionLocal = sessionmaker(bind=test_engine, autoflush=False, autocommit=False)
 
+DEFAULT_USER_ID = "user-1"
+
 
 def _override_get_db():
     db = TestSessionLocal()
@@ -35,6 +39,14 @@ def _override_get_db():
 app.dependency_overrides[get_db] = _override_get_db
 
 
+def _authenticate_as(user_id: str) -> None:
+    """Overrides the real Firebase token-verification dependency with a fake
+    decoded token for the given uid - the only way to test user-scoped
+    behavior without a live Firebase ID token. See TestAuthProtection for a
+    test against the *real*, unmocked dependency."""
+    app.dependency_overrides[require_firebase_auth] = lambda: {"uid": user_id}
+
+
 @pytest.fixture(autouse=True)
 def _fresh_db_and_rate_limits():
     Base.metadata.drop_all(test_engine)
@@ -42,7 +54,9 @@ def _fresh_db_and_rate_limits():
     _last_sync_at.clear()
     _last_affordability_check_at.clear()
     _last_recommend_at.clear()
+    _authenticate_as(DEFAULT_USER_ID)
     yield
+    app.dependency_overrides.pop(require_firebase_auth, None)
 
 
 @pytest.fixture
@@ -50,9 +64,16 @@ def client():
     return TestClient(app)
 
 
-def _link_and_exchange(client, user_id="user-1", access_token="access-sandbox-abc123"):
+@pytest.fixture
+def auth_as():
+    """Switches the fake authenticated session to a different user_id -
+    for tests that need to prove two identities are kept separate."""
+    return _authenticate_as
+
+
+def _link_and_exchange(client, access_token="access-sandbox-abc123"):
     with patch("app.main.exchange_public_token", return_value=access_token):
-        response = client.post("/link/exchange", json={"user_id": user_id, "public_token": "public-token"})
+        response = client.post("/link/exchange", json={"public_token": "public-token"})
     assert response.status_code == 200
     return response
 
@@ -65,15 +86,68 @@ class TestConfig:
         assert "plaid_env" in body
         assert "is_sandbox" in body
 
+    def test_includes_production_connection_counter(self, client):
+        response = client.get("/config")
+        body = response.json()
+        assert body["production_connections_used"] == 0
+        assert body["production_connections_limit"] == 10
+
+    def test_does_not_require_authentication(self, client):
+        app.dependency_overrides.pop(require_firebase_auth, None)
+        try:
+            response = client.get("/config")
+        finally:
+            _authenticate_as(DEFAULT_USER_ID)
+        assert response.status_code == 200
+
+
+class TestMe:
+    def test_reports_no_linked_bank_for_a_fresh_user(self, client):
+        response = client.get("/auth/me")
+        assert response.status_code == 200
+        assert response.json() == {"uid": DEFAULT_USER_ID, "has_linked_bank": False}
+
+    def test_reports_linked_bank_after_exchange(self, client):
+        _link_and_exchange(client)
+        response = client.get("/auth/me")
+        assert response.json()["has_linked_bank"] is True
+
+    def test_reflects_whichever_uid_is_authenticated(self, client, auth_as):
+        auth_as("someone-else")
+        assert client.get("/auth/me").json()["uid"] == "someone-else"
+
+
+class TestAuthProtection:
+    """Tests against the real, unmocked require_firebase_auth dependency -
+    every other class in this file overrides it with a fake decoded token so
+    it can test user-scoped behavior without a live Firebase ID token. This
+    class is what actually proves the protection is real."""
+
+    def test_protected_endpoint_401s_without_a_session(self, client):
+        app.dependency_overrides.pop(require_firebase_auth, None)
+        try:
+            response = client.get("/transactions")
+        finally:
+            _authenticate_as(DEFAULT_USER_ID)
+        assert response.status_code == 401
+
+    def test_protected_post_endpoint_401s_without_a_session(self, client):
+        app.dependency_overrides.pop(require_firebase_auth, None)
+        try:
+            response = client.post("/budget", json={"category": "Food", "amount": 100.0})
+        finally:
+            _authenticate_as(DEFAULT_USER_ID)
+        assert response.status_code == 401
+
 
 class TestLinkToken:
     def test_returns_link_token(self, client):
         with patch("app.main.create_link_token", return_value="link-sandbox-abc123") as mock_create:
-            response = client.post("/link/token", json={"user_id": "user-1"})
+            response = client.post("/link/token")
 
         assert response.status_code == 200
         assert response.json() == {"link_token": "link-sandbox-abc123"}
-        mock_create.assert_called_once_with(user_id="user-1")
+        mock_create.assert_called_once_with(user_id=DEFAULT_USER_ID)
 
 
 class TestLinkExchange:
@@ -82,10 +156,75 @@ class TestLinkExchange:
         assert response.json() == {"status": "ok"}
         assert "access_token" not in response.text
 
+    def test_sandbox_exchange_does_not_count_against_production_limit(self, client):
+        _link_and_exchange(client)
+        assert client.get("/config").json()["production_connections_used"] == 0
+
+    def test_production_exchange_increments_the_counter(self, client, auth_as):
+        auth_as("user-prod")
+        with patch("app.main.IS_SANDBOX", False):
+            _link_and_exchange(client)
+        assert client.get("/config").json()["production_connections_used"] == 1
+
+    def test_counter_never_decreases_after_disconnect(self, client, auth_as):
+        auth_as("user-prod")
+        with patch("app.main.IS_SANDBOX", False):
+            _link_and_exchange(client)
+            with patch("app.main.remove_item"):
+                client.post("/link/disconnect")
+        assert client.get("/config").json()["production_connections_used"] == 1
+
+
+class TestDisconnect:
+    def test_removes_item_and_calls_plaid_remove(self, client):
+        _link_and_exchange(client, access_token="access-sandbox-xyz")
+        with patch("app.main.remove_item") as mock_remove:
+            response = client.post("/link/disconnect")
+
+        assert response.status_code == 200
+        mock_remove.assert_called_once_with("access-sandbox-xyz")
+        # Item is gone locally - syncing again should 404 like a never-linked user.
+        assert client.post("/sync").status_code == 404
+
+    def test_clears_stored_transactions(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-07-01",
+                "name": "Coffee",
+                "amount": 5.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value=raw):
+            client.post("/sync")
+        assert len(client.get("/transactions").json()) == 1
+
+        with patch("app.main.remove_item"):
+            client.post("/link/disconnect")
+
+        # Re-link so /transactions doesn't 404-equivalent on an unlinked user,
+        # then confirm the old transactions didn't survive the disconnect.
+        _link_and_exchange(client)
+        assert client.get("/transactions").json() == []
+
+    def test_404_when_nothing_linked(self, client):
+        response = client.post("/link/disconnect")
+        assert response.status_code == 404
+
+    def test_local_cleanup_succeeds_even_if_plaid_remove_call_fails(self, client):
+        _link_and_exchange(client)
+        with patch("app.main.remove_item", side_effect=RuntimeError("plaid unavailable")):
+            response = client.post("/link/disconnect")
+
+        assert response.status_code == 200
+        assert client.post("/sync").status_code == 404
+
 
 class TestSync:
     def test_404_without_a_linked_item(self, client):
-        response = client.post("/sync", json={"user_id": "nobody"})
+        response = client.post("/sync")
         assert response.status_code == 404
 
     def test_syncs_and_categorizes_transactions(self, client):
@@ -108,30 +247,34 @@ class TestSync:
             },
         ]
         with patch("app.main.fetch_transactions", return_value=raw_transactions):
-            response = client.post("/sync", json={"user_id": "user-1"})
+            response = client.post("/sync")
 
         assert response.status_code == 200
         assert response.json() == {"synced_count": 2}
 
-        transactions = client.get("/transactions", params={"user_id": "user-1"}).json()
+        transactions = client.get("/transactions").json()
         categories = {t["transaction_id"]: t["category"] for t in transactions}
         assert categories == {"tx1": "Housing", "tx2": "Subscriptions"}
 
     def test_second_sync_within_cooldown_is_rate_limited(self, client):
         _link_and_exchange(client)
         with patch("app.main.fetch_transactions", return_value=[]):
-            first = client.post("/sync", json={"user_id": "user-1"})
-            second = client.post("/sync", json={"user_id": "user-1"})
+            first = client.post("/sync")
+            second = client.post("/sync")
 
         assert first.status_code == 200
         assert second.status_code == 429
 
-    def test_different_users_have_independent_rate_limits(self, client):
-        _link_and_exchange(client, user_id="user-1")
-        _link_and_exchange(client, user_id="user-2")
+    def test_different_users_have_independent_rate_limits(self, client, auth_as):
+        auth_as("user-1")
+        _link_and_exchange(client)
         with patch("app.main.fetch_transactions", return_value=[]):
-            first = client.post("/sync", json={"user_id": "user-1"})
-            second = client.post("/sync", json={"user_id": "user-2"})
+            first = client.post("/sync")
+
+        auth_as("user-2")
+        _link_and_exchange(client)
+        with patch("app.main.fetch_transactions", return_value=[]):
+            second = client.post("/sync")
 
         assert first.status_code == 200
         assert second.status_code == 200
@@ -167,11 +310,11 @@ class TestTransactions:
             },
         ]
         with patch("app.main.fetch_transactions", return_value=raw):
-            client.post("/sync", json={"user_id": "user-1"})
+            client.post("/sync")
 
     def test_filters_by_category(self, client):
         self._sync_sample(client)
-        response = client.get("/transactions", params={"user_id": "user-1", "category": "Food"})
+        response = client.get("/transactions", params={"category": "Food"})
         body = response.json()
         assert len(body) == 1
         assert body[0]["transaction_id"] == "tx2"
@@ -180,25 +323,30 @@ class TestTransactions:
         self._sync_sample(client)
         response = client.get(
             "/transactions",
-            params={"user_id": "user-1", "start_date": "2026-07-01", "end_date": "2026-07-31"},
+            params={"start_date": "2026-07-01", "end_date": "2026-07-31"},
         )
         ids = {t["transaction_id"] for t in response.json()}
         assert ids == {"tx1", "tx2"}
 
+    def test_different_users_see_only_their_own_transactions(self, client, auth_as):
+        auth_as("user-1")
+        self._sync_sample(client)
+
+        auth_as("user-2")
+        assert client.get("/transactions").json() == []
+
 
 class TestBudget:
     def test_set_and_read_back_budget(self, client):
-        response = client.post("/budget", json={"user_id": "user-1", "category": "Food", "amount": 300.0})
+        response = client.post("/budget", json={"category": "Food", "amount": 300.0})
         assert response.status_code == 200
         assert response.json() == {"category": "Food", "amount": 300.0}
 
     def test_updating_budget_overwrites_not_duplicates(self, client):
-        client.post("/budget", json={"user_id": "user-1", "category": "Food", "amount": 300.0})
-        client.post("/budget", json={"user_id": "user-1", "category": "Food", "amount": 250.0})
+        client.post("/budget", json={"category": "Food", "amount": 300.0})
+        client.post("/budget", json={"category": "Food", "amount": 250.0})
 
-        response = client.get(
-            "/budget/status", params={"user_id": "user-1", "start_date": "2020-01-01", "end_date": "2030-01-01"}
-        )
+        response = client.get("/budget/status", params={"start_date": "2020-01-01", "end_date": "2030-01-01"})
         assert response.json()["Food"]["budget"] == 250.0
 
     def test_budget_status_over_under_and_unbudgeted(self, client):
@@ -220,21 +368,26 @@ class TestBudget:
             },
         ]
         with patch("app.main.fetch_transactions", return_value=raw):
-            client.post("/sync", json={"user_id": "user-1"})
+            client.post("/sync")
 
-        client.post("/budget", json={"user_id": "user-1", "category": "Housing", "amount": 1500.0})
-        client.post("/budget", json={"user_id": "user-1", "category": "Food", "amount": 200.0})
+        client.post("/budget", json={"category": "Housing", "amount": 1500.0})
+        client.post("/budget", json={"category": "Food", "amount": 200.0})
 
-        response = client.get(
-            "/budget/status", params={"user_id": "user-1", "start_date": "2026-07-01", "end_date": "2026-07-31"}
-        )
+        response = client.get("/budget/status", params={"start_date": "2026-07-01", "end_date": "2026-07-31"})
         body = response.json()
         assert body["Housing"]["status"] == "over"
         assert body["Food"]["status"] == "under"
 
     def test_defaults_to_current_month_when_no_dates_given(self, client):
-        response = client.get("/budget/status", params={"user_id": "user-1"})
+        response = client.get("/budget/status")
         assert response.status_code == 200
+
+    def test_different_users_have_independent_budgets(self, client, auth_as):
+        auth_as("user-1")
+        client.post("/budget", json={"category": "Food", "amount": 300.0})
+
+        auth_as("user-2")
+        assert client.get("/budget/status").json() == {}
 
 
 class TestAffordabilityCheck:
@@ -251,8 +404,8 @@ class TestAffordabilityCheck:
             }
         ]
         with patch("app.main.fetch_transactions", return_value=raw):
-            client.post("/sync", json={"user_id": "user-1"})
-        client.post("/budget", json={"user_id": "user-1", "category": "Entertainment", "amount": 500.0})
+            client.post("/sync")
+        client.post("/budget", json={"category": "Entertainment", "amount": 500.0})
 
     def test_returns_verdict_and_math(self, client):
         self._seed_current_month(client)
@@ -262,7 +415,7 @@ class TestAffordabilityCheck:
         ):
             response = client.post(
                 "/affordability/check",
-                json={"user_id": "user-1", "price": 480.0, "category": "Entertainment", "timing": "one_time"},
+                json={"price": 480.0, "category": "Entertainment", "timing": "one_time"},
             )
 
         assert response.status_code == 200
@@ -278,7 +431,7 @@ class TestAffordabilityCheck:
         self._seed_current_month(client)
         response = client.post(
             "/affordability/check",
-            json={"user_id": "user-1", "price": 0, "category": "Entertainment", "timing": "one_time"},
+            json={"price": 0, "category": "Entertainment", "timing": "one_time"},
         )
         assert response.status_code == 400
 
@@ -286,14 +439,14 @@ class TestAffordabilityCheck:
         self._seed_current_month(client)
         response = client.post(
             "/affordability/check",
-            json={"user_id": "user-1", "price": 50, "category": "Entertainment", "timing": "yearly"},
+            json={"price": 50, "category": "Entertainment", "timing": "yearly"},
         )
         assert response.status_code == 400
 
     def test_works_for_a_user_with_no_budgets_or_transactions_yet(self, client):
         response = client.post(
             "/affordability/check",
-            json={"user_id": "brand-new-user", "price": 50, "category": "Food", "timing": "one_time"},
+            json={"price": 50, "category": "Food", "timing": "one_time"},
         )
         assert response.status_code == 200
         # Nothing budgeted anywhere yet - nothing to be "over", so this
@@ -302,24 +455,215 @@ class TestAffordabilityCheck:
 
     def test_second_check_within_cooldown_is_rate_limited(self, client):
         self._seed_current_month(client)
-        with patch(
-            "app.main.explain_verdict", return_value={"explanation": "x", "source": "ai", "error": None}
-        ):
+        with patch("app.main.explain_verdict", return_value={"explanation": "x", "source": "ai", "error": None}):
             first = client.post(
                 "/affordability/check",
-                json={"user_id": "user-1", "price": 50, "category": "Entertainment", "timing": "one_time"},
+                json={"price": 50, "category": "Entertainment", "timing": "one_time"},
             )
             second = client.post(
                 "/affordability/check",
-                json={"user_id": "user-1", "price": 50, "category": "Entertainment", "timing": "one_time"},
+                json={"price": 50, "category": "Entertainment", "timing": "one_time"},
             )
         assert first.status_code == 200
         assert second.status_code == 429
 
+    def test_housing_category_includes_retrieved_facts_and_passes_location(self, client):
+        self._seed_current_month(client)
+        client.post("/budget", json={"category": "Housing", "amount": 2000.0})
+        facts = [{"text": "The average 30 year mortgage rate is 6.8%.", "category": "mortgage_rate", "source": "FRED", "stale": False}]
+        with patch("app.main.explain_verdict", return_value={"explanation": "x", "source": "ai", "error": None}), patch(
+            "app.main.retrieve_housing_context", return_value=facts
+        ) as retrieve_housing_context:
+            response = client.post(
+                "/affordability/check",
+                json={
+                    "price": 500.0,
+                    "category": "Housing",
+                    "timing": "one_time",
+                    "location": "Austin, TX",
+                },
+            )
+
+        assert response.status_code == 200
+        retrieve_housing_context.assert_called_once_with("Austin, TX")
+        assert response.json()["retrieved_facts"] == facts
+
+    def test_non_housing_category_never_calls_retrieval(self, client):
+        self._seed_current_month(client)
+        with patch("app.main.explain_verdict", return_value={"explanation": "x", "source": "ai", "error": None}), patch(
+            "app.main.retrieve_housing_context"
+        ) as retrieve_housing_context:
+            response = client.post(
+                "/affordability/check",
+                json={"price": 50, "category": "Entertainment", "timing": "one_time"},
+            )
+
+        assert response.status_code == 200
+        retrieve_housing_context.assert_not_called()
+        assert response.json()["retrieved_facts"] == []
+
+    def test_retrieval_failure_degrades_to_empty_facts_not_an_error(self, client):
+        self._seed_current_month(client)
+        client.post("/budget", json={"category": "Housing", "amount": 2000.0})
+        with patch("app.main.explain_verdict", return_value={"explanation": "x", "source": "ai", "error": None}), patch(
+            "app.main.retrieve_housing_context", side_effect=RuntimeError("chroma unavailable")
+        ):
+            response = client.post(
+                "/affordability/check",
+                json={"price": 500.0, "category": "Housing", "timing": "one_time"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["retrieved_facts"] == []
+
+    def test_includes_savings_plan_when_not_comfortable(self, client):
+        self._seed_current_month(client)
+        with patch("app.main.explain_verdict", return_value={"explanation": "x", "source": "ai", "error": None}):
+            response = client.post(
+                "/affordability/check",
+                json={"price": 480.0, "category": "Entertainment", "timing": "one_time"},
+            )
+
+        body = response.json()
+        assert body["verdict"] != "comfortable"
+        assert body["savings_plan"] is not None
+        assert body["savings_plan"]["gap"] == 480.0
+        assert set(body["savings_plan"].keys()) == {"gap", "monthly_savings_capacity", "months_to_goal"}
+
+    def test_savings_plan_is_none_when_comfortable(self, client):
+        response = client.post(
+            "/affordability/check",
+            json={"price": 50, "category": "Food", "timing": "one_time"},
+        )
+        assert response.json()["verdict"] == "comfortable"
+        assert response.json()["savings_plan"] is None
+
+
+class TestGoals:
+    def _seed(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-05-15",
+                "name": "Whole Foods",
+                "amount": 100.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            },
+            {
+                "transaction_id": "tx2",
+                "date": "2026-06-15",
+                "name": "Whole Foods",
+                "amount": 100.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            },
+            {
+                "transaction_id": "tx3",
+                "date": "2026-07-20",
+                "name": "Whole Foods",
+                "amount": 50.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            },
+        ]
+        with patch("app.main.fetch_transactions", return_value=raw):
+            client.post("/sync")
+        client.post("/budget", json={"category": "Food", "amount": 300.0})
+
+    def _expected_capacity(self):
+        budgets = {"Food": 300.0}
+        transactions = [
+            {"date": "2026-05-15", "amount": 100.0, "category": "Food"},
+            {"date": "2026-06-15", "amount": 100.0, "category": "Food"},
+            {"date": "2026-07-20", "amount": 50.0, "category": "Food"},
+        ]
+        return compute_monthly_savings_capacity(budgets, transactions)
+
+    def _create(self, client, **overrides):
+        payload = {"name": "PS5", "target_amount": 500.0, "category": "Food"}
+        payload.update(overrides)
+        return client.post("/goals", json=payload)
+
+    def test_create_goal_computes_capacity_from_real_history(self, client):
+        self._seed(client)
+        response = self._create(client)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "PS5"
+        assert body["status"] == "active"
+        assert body["monthly_savings_capacity"] == self._expected_capacity()
+        assert "health" in body
+
+    def test_rejects_non_positive_target_amount(self, client):
+        response = self._create(client, target_amount=0)
+        assert response.status_code == 400
+
+    def test_list_goals_defaults_to_active_only(self, client):
+        self._seed(client)
+        created = self._create(client).json()
+        client.delete(f"/goals/{created['id']}")
+
+        assert client.get("/goals").json() == []
+
+        abandoned = client.get("/goals", params={"status": "abandoned"}).json()
+        assert len(abandoned) == 1
+        assert abandoned[0]["status"] == "abandoned"
+
+    def test_patch_updates_current_saved_without_changing_capacity(self, client):
+        self._seed(client)
+        created = self._create(client).json()
+
+        response = client.patch(f"/goals/{created['id']}", json={"current_saved": 100.0})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["current_saved"] == 100.0
+        assert body["monthly_savings_capacity"] == created["monthly_savings_capacity"]
+
+    def test_patch_404s_for_unknown_goal(self, client):
+        response = client.patch("/goals/999", json={"current_saved": 10.0})
+        assert response.status_code == 404
+
+    def test_patch_rejects_non_positive_target_amount(self, client):
+        self._seed(client)
+        created = self._create(client).json()
+        response = client.patch(f"/goals/{created['id']}", json={"target_amount": -5.0})
+        assert response.status_code == 400
+
+    def test_delete_abandons_goal(self, client):
+        self._seed(client)
+        created = self._create(client).json()
+
+        response = client.delete(f"/goals/{created['id']}")
+        assert response.status_code == 200
+        assert response.json() == {"status": "abandoned"}
+
+    def test_delete_404s_for_unknown_goal(self, client):
+        response = client.delete("/goals/999")
+        assert response.status_code == 404
+
+    def test_health_endpoint_matches_embedded_health(self, client):
+        self._seed(client)
+        created = self._create(client).json()
+
+        response = client.get(f"/goals/{created['id']}/health")
+        assert response.status_code == 200
+        assert response.json() == created["health"]
+
+    def test_health_404s_for_unknown_goal(self, client):
+        response = client.get("/goals/999/health")
+        assert response.status_code == 404
+
+    def test_different_users_have_independent_goals(self, client, auth_as):
+        auth_as("user-1")
+        self._seed(client)
+        self._create(client)
+
+        auth_as("user-2")
+        assert client.get("/goals").json() == []
+
 
 class TestBudgetRecommend:
     def test_no_history_returns_empty_recommendations(self, client):
-        response = client.post("/budget/recommend", json={"user_id": "brand-new-user"})
+        response = client.post("/budget/recommend", json={})
         assert response.status_code == 200
         body = response.json()
         assert body["recommendations"] == []
@@ -344,7 +688,7 @@ class TestBudgetRecommend:
             },
         ]
         with patch("app.main.fetch_transactions", return_value=raw):
-            client.post("/sync", json={"user_id": "user-1"})
+            client.post("/sync")
 
         with patch(
             "app.main.recommend_budgets",
@@ -357,7 +701,7 @@ class TestBudgetRecommend:
                 "error": None,
             },
         ) as mock_recommend:
-            response = client.post("/budget/recommend", json={"user_id": "user-1", "months": 6})
+            response = client.post("/budget/recommend", json={"months": 6})
 
         assert response.status_code == 200
         body = response.json()
@@ -373,7 +717,7 @@ class TestBudgetRecommend:
             "app.main.recommend_budgets",
             return_value={"recommendations": [], "summary": "x", "source": "none", "error": None},
         ):
-            first = client.post("/budget/recommend", json={"user_id": "user-1"})
-            second = client.post("/budget/recommend", json={"user_id": "user-1"})
+            first = client.post("/budget/recommend", json={})
+            second = client.post("/budget/recommend", json={})
         assert first.status_code == 200
         assert second.status_code == 429

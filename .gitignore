@@ -10,6 +10,7 @@ venv/
 !.env.example
 chroma_data/
 *.db
+firebase-service-account*.json
 
 # Logs
 logs

@@ -14,6 +14,15 @@ PLAID_SECRET = os.environ.get("PLAID_SECRET")
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY")
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./expense_tracker.db")
 
+# The frontend authenticates directly against Firebase (email/password) and
+# sends the resulting ID token as a Bearer header on every request; this is
+# the service account key that lets our backend verify those tokens. Path to
+# the JSON key file downloaded from Firebase Console -> Project Settings ->
+# Service Accounts -> Generate New Private Key. Never commit this file.
+FIREBASE_SERVICE_ACCOUNT_PATH = os.environ.get(
+    "FIREBASE_SERVICE_ACCOUNT_PATH", "./firebase-service-account.json"
+)
+
 # Plaid retired the standalone "Development" host; real-bank access below full
 # Production Access review now happens over the Production host itself
 # ("Limited Production", capped at a small free call volume). We keep our own
