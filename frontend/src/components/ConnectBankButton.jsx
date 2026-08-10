@@ -9,7 +9,7 @@ const POINTS = [
   "Your access token stays on your own server; budgets stay in your browser.",
 ];
 
-export function ConnectBankButton({ userId, onLinked }) {
+export function ConnectBankButton({ userId, onLinked, isSandbox }) {
   const [linkToken, setLinkToken] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | idle | linking | error
 
@@ -69,6 +69,20 @@ export function ConnectBankButton({ userId, onLinked }) {
             </div>
           ))}
         </div>
+        {isSandbox && (
+          <div className="mb-[22px] border border-hairline bg-surface px-4 py-3.5">
+            <div className="mb-1.5 font-mono text-[10px] font-medium uppercase tracking-[.12em] text-ink-faint">
+              Demo mode — use the Plaid test bank
+            </div>
+            <p className="text-[13px] leading-[1.6] text-ink">
+              This is Plaid&apos;s Sandbox, not a real bank connection. When Plaid Link
+              opens, search for <strong className="font-medium">First Platypus Bank</strong> and
+              log in with username <code className="font-mono text-[12.5px]">user_good</code> and
+              password <code className="font-mono text-[12.5px]">pass_good</code>. Searching for
+              your real bank will lead to a dead end — Sandbox doesn&apos;t have your real accounts.
+            </p>
+          </div>
+        )}
         <button
           onClick={() => open()}
           disabled={!ready || status === "linking"}

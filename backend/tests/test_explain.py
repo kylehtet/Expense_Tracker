@@ -28,6 +28,7 @@ def _mock_response(text):
     block.text = text
     response = MagicMock()
     response.content = [block]
+    response.usage = MagicMock(input_tokens=120, output_tokens=40)
     return response
 
 
@@ -98,3 +99,29 @@ class TestExplainVerdict:
 
         assert result["source"] == "fallback"
         assert "$50.00" in result["explanation"]
+
+    def test_identical_facts_hit_cache_instead_of_calling_api_again(self):
+        with patch("app.explain._get_client") as get_client:
+            get_client.return_value.messages.create.return_value = _mock_response("Cached text.")
+            first = explain_verdict(FACTS)
+            second = explain_verdict(FACTS)
+
+        assert get_client.return_value.messages.create.call_count == 1
+        assert first == second
+
+    def test_logs_real_token_usage_on_success(self):
+        with patch("app.explain._get_client") as get_client, patch("app.explain.log_usage") as log_usage:
+            get_client.return_value.messages.create.return_value = _mock_response("Some text.")
+            explain_verdict(FACTS)
+
+        log_usage.assert_called_once_with("explain_verdict", "claude-sonnet-5", 120, 40)
+
+    def test_logs_cached_call_with_zero_tokens(self):
+        with patch("app.explain._get_client") as get_client:
+            get_client.return_value.messages.create.return_value = _mock_response("Some text.")
+            explain_verdict(FACTS)
+
+        with patch("app.explain.log_usage") as log_usage:
+            explain_verdict(FACTS)
+
+        log_usage.assert_called_once_with("explain_verdict", "claude-sonnet-5", input_tokens=0, output_tokens=0, cached=True)

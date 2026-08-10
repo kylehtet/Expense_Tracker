@@ -12,6 +12,7 @@ import { AffordabilityChecker } from "./components/AffordabilityChecker";
 
 const LINKED_KEY_PREFIX = "expense_tracker_linked_";
 const SYNCED_AT_KEY_PREFIX = "expense_tracker_synced_at_";
+const SYNC_COOLDOWN_MS = 60_000; // mirrors backend SYNC_COOLDOWN_SECONDS in main.py
 
 const TABS = ["Dashboard", "Affordability", "Settings"];
 
@@ -43,7 +44,19 @@ function App() {
     const stored = localStorage.getItem(SYNCED_AT_KEY_PREFIX + userId);
     return stored ? new Date(stored) : null;
   });
+  const [syncBlockedUntil, setSyncBlockedUntil] = useState(0);
   const [, forceTick] = useState(0);
+
+  // Live-updating countdown while the sync button is cooling down, so
+  // "rate limited" reads as a visible timer instead of a dead-end error.
+  useEffect(() => {
+    if (syncBlockedUntil <= Date.now()) return;
+    const id = setInterval(() => {
+      forceTick((n) => n + 1);
+      if (Date.now() >= syncBlockedUntil) clearInterval(id);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [syncBlockedUntil]);
 
   useEffect(() => {
     api.getConfig().then(setConfig).catch(() => setConfig({ is_sandbox: true }));
@@ -71,6 +84,7 @@ function App() {
   };
 
   const handleSync = async () => {
+    if (Date.now() < syncBlockedUntil) return;
     setSyncState("syncing");
     setSyncError(null);
     try {
@@ -78,13 +92,21 @@ function App() {
       const now = new Date();
       setSyncedAt(now);
       localStorage.setItem(SYNCED_AT_KEY_PREFIX + userId, now.toISOString());
+      setSyncBlockedUntil(Date.now() + SYNC_COOLDOWN_MS);
       setRefreshKey((k) => k + 1);
     } catch (err) {
-      setSyncError(err.status === 429 ? err.message : "Sync failed. Try again in a moment.");
+      if (err.status === 429) {
+        const match = /retry after (\d+)s/.exec(err.message);
+        setSyncBlockedUntil(Date.now() + (match ? Number(match[1]) * 1000 : SYNC_COOLDOWN_MS));
+      } else {
+        setSyncError("Sync failed. Try again in a moment.");
+      }
     } finally {
       setSyncState("idle");
     }
   };
+
+  const syncCooldownSeconds = Math.max(0, Math.ceil((syncBlockedUntil - Date.now()) / 1000));
 
   if (showLanding) {
     return <LandingPage onTryDemo={() => setShowLanding(false)} />;
@@ -118,10 +140,14 @@ function App() {
             </span>
             <button
               onClick={handleSync}
-              disabled={syncState === "syncing"}
+              disabled={syncState === "syncing" || syncCooldownSeconds > 0}
               className="whitespace-nowrap border border-field px-3.5 py-[9px] font-display text-[13px] font-semibold uppercase tracking-[.04em] text-ink hover:bg-sunken disabled:opacity-50"
             >
-              Sync now
+              {syncState === "syncing"
+                ? "Syncing…"
+                : syncCooldownSeconds > 0
+                  ? `Sync again in ${syncCooldownSeconds}s`
+                  : "Sync now"}
             </button>
           </div>
         </nav>
@@ -132,7 +158,7 @@ function App() {
 
       <main className="mx-auto flex w-full max-w-[1240px] flex-1 flex-col gap-8 px-6 py-8">
         {!linked ? (
-          <ConnectBankButton userId={userId} onLinked={handleLinked} />
+          <ConnectBankButton userId={userId} onLinked={handleLinked} isSandbox={config?.is_sandbox} />
         ) : tab === "Dashboard" ? (
           <Dashboard status={status} transactions={transactions} />
         ) : tab === "Affordability" ? (

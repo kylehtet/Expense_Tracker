@@ -7,18 +7,17 @@ from __future__ import annotations
 
 import anthropic
 
+from app import llm_cache
+from app.llm_metrics import log_usage
+
 MODEL = "claude-sonnet-5"
+FEATURE = "explain_verdict"
 
 SYSTEM_PROMPT = (
-    "You write a one-to-three sentence plain-language explanation of a personal "
-    "finance affordability check. You are given the exact numbers a rules engine "
-    "already computed - restate them naturally. Never invent, round differently, "
-    "or add any number that is not provided. Do not give financial advice or "
-    "recommendations, and do not use the word 'advice' - just explain what the "
-    "numbers mean for this purchase. Be direct and concrete, e.g.: 'A $480 "
-    "one-time purchase in Entertainment uses more than the $98 left in that "
-    "category, pushing it $382 over for August. Your overall budget still has "
-    "room, so this is a trade, not a stop.'"
+    "Write a 1-3 sentence, direct, concrete plain-language explanation of a "
+    "personal finance affordability check, using only the exact pre-computed "
+    "numbers given - never invent, round differently, or add a number. No "
+    "financial advice or recommendations, and never use the word 'advice'."
 )
 
 VERDICT_LABEL = {
@@ -85,16 +84,25 @@ def _fallback_explanation(facts: dict) -> str:
 
 
 def explain_verdict(facts: dict) -> dict:
+    key = llm_cache.cache_key(FEATURE, facts)
+    cached = llm_cache.get(key)
+    if cached is not None:
+        log_usage(FEATURE, MODEL, input_tokens=0, output_tokens=0, cached=True)
+        return cached
+
     try:
         response = _get_client().messages.create(
             model=MODEL,
-            max_tokens=300,
+            max_tokens=150,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": _build_user_message(facts)}],
         )
         text = next((b.text for b in response.content if b.type == "text"), "").strip()
         if not text:
             raise ValueError("empty response")
-        return {"explanation": text, "source": "ai", "error": None}
+        log_usage(FEATURE, MODEL, response.usage.input_tokens, response.usage.output_tokens)
+        result = {"explanation": text, "source": "ai", "error": None}
+        llm_cache.set(key, result)
+        return result
     except Exception as exc:
         return {"explanation": _fallback_explanation(facts), "source": "fallback", "error": str(exc)}

@@ -8,20 +8,19 @@ from __future__ import annotations
 import anthropic
 from pydantic import BaseModel
 
+from app import llm_cache
 from app.budget import spending_trend
+from app.llm_metrics import log_usage
 
 MODEL = "claude-sonnet-5"
+FEATURE = "recommend_budgets"
 
 SYSTEM_PROMPT = (
-    "You recommend monthly budget limits for a personal finance app, one per "
-    "category. You are given each category's real spend for the last several "
-    "months - use only those numbers, never invent a spending figure. For each "
-    "category, propose a sensible round-number monthly budget: usually close to "
-    "the average, nudged up if spending is trending up or highly variable so the "
-    "budget isn't unrealistically tight, and rounded to a number a person would "
-    "actually type (nearest $5 or $10, not $266.14). If a category has no "
-    "spending history, omit it rather than guessing. Keep each rationale to one "
-    "short, concrete sentence referencing the actual numbers you were given."
+    "Recommend a monthly budget per category using only the given real spend "
+    "numbers - never invent a figure. Propose a round number near the average, "
+    "nudged up if spend is rising or volatile, rounded to the nearest $5-$10. "
+    "Omit categories with no history. One short, concrete rationale per "
+    "category referencing the actual numbers."
 )
 
 
@@ -115,21 +114,30 @@ def recommend_budgets(transactions: list, current_budgets: dict, months: int = 6
             "error": None,
         }
 
+    key = llm_cache.cache_key(FEATURE, profile, current_budgets)
+    cached = llm_cache.get(key)
+    if cached is not None:
+        log_usage(FEATURE, MODEL, input_tokens=0, output_tokens=0, cached=True)
+        return cached
+
     try:
         response = _get_client().messages.parse(
             model=MODEL,
-            max_tokens=1024,
+            max_tokens=800,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": _build_user_message(profile, current_budgets)}],
             output_format=BudgetRecommendations,
         )
         parsed = response.parsed_output
-        return {
+        log_usage(FEATURE, MODEL, response.usage.input_tokens, response.usage.output_tokens)
+        result = {
             "recommendations": [r.model_dump() for r in parsed.recommendations if r.recommended_budget > 0],
             "summary": parsed.summary,
             "source": "ai",
             "error": None,
         }
+        llm_cache.set(key, result)
+        return result
     except Exception as exc:
         result = _fallback_recommendations(profile)
         result["source"] = "fallback"

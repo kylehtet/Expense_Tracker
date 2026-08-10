@@ -42,6 +42,7 @@ def _mock_parse_response(recommendations, summary):
     )
     response = MagicMock()
     response.parsed_output = parsed
+    response.usage = MagicMock(input_tokens=200, output_tokens=150)
     return response
 
 
@@ -102,3 +103,23 @@ class TestRecommendBudgets:
         # Fallback bases the number on max(average, most_recent) = 1585.0 here,
         # rounded up - not the single highest month observed (1635.0 in June).
         assert housing["recommended_budget"] > 1585.0
+
+    def test_identical_input_hits_cache_instead_of_calling_api_again(self, sandbox_transactions):
+        with patch("app.recommend._get_client") as get_client:
+            get_client.return_value.messages.parse.return_value = _mock_parse_response(
+                [{"category": "Housing", "recommended_budget": 1600.0, "rationale": "ok"}], "summary"
+            )
+            first = recommend_budgets(sandbox_transactions, {}, months=3)
+            second = recommend_budgets(sandbox_transactions, {}, months=3)
+
+        assert get_client.return_value.messages.parse.call_count == 1
+        assert first == second
+
+    def test_logs_real_token_usage_on_success(self, sandbox_transactions):
+        with patch("app.recommend._get_client") as get_client, patch("app.recommend.log_usage") as log_usage:
+            get_client.return_value.messages.parse.return_value = _mock_parse_response(
+                [{"category": "Housing", "recommended_budget": 1600.0, "rationale": "ok"}], "summary"
+            )
+            recommend_budgets(sandbox_transactions, {}, months=3)
+
+        log_usage.assert_called_once_with("recommend_budgets", "claude-sonnet-5", 200, 150)

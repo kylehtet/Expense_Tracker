@@ -30,3 +30,12 @@ def sandbox_transactions_by_month(sandbox_transactions) -> dict[str, list[dict]]
     for txn in sandbox_transactions:
         by_month.setdefault(txn["date"][:7], []).append(txn)
     return by_month
+
+
+@pytest.fixture(autouse=True)
+def _clear_llm_cache():
+    from app import llm_cache
+
+    llm_cache.clear()
+    yield
+    llm_cache.clear()
