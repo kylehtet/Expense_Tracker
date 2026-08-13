@@ -101,7 +101,7 @@ export function ConnectBankButton({ onLinked, isSandbox }) {
             className="blueprint relative inline-flex items-center bg-accent-deep px-6 py-3.5 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ground hover:bg-accent-press disabled:opacity-50"
           >
             <Corners />
-            {status === "linking" ? "Connecting…" : "Launch Plaid Link"}
+            {status === "linking" ? "Connecting…" : "Connect"}
           </button>
         )}
         <p className="mt-4 text-[12.5px] text-ink-faint">

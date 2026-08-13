@@ -13,6 +13,7 @@ from app.goal_tracker import compute_monthly_savings_capacity
 from app.main import (
     SYNC_COOLDOWN_SECONDS,
     _last_affordability_check_at,
+    _last_auto_budget_at,
     _last_recommend_at,
     _last_sync_at,
     app,
@@ -54,6 +55,7 @@ def _fresh_db_and_rate_limits():
     _last_sync_at.clear()
     _last_affordability_check_at.clear()
     _last_recommend_at.clear()
+    _last_auto_budget_at.clear()
     _authenticate_as(DEFAULT_USER_ID)
     yield
     app.dependency_overrides.pop(require_firebase_auth, None)
@@ -174,6 +176,27 @@ class TestLinkExchange:
             with patch("app.main.remove_item"):
                 client.post("/link/disconnect")
         assert client.get("/config").json()["production_connections_used"] == 1
+
+    def test_same_account_relinking_does_not_double_count(self, client, auth_as):
+        """A single account disconnecting and relinking (or just calling
+        /link/exchange twice) must not burn two slots against the limit -
+        only distinct accounts should count."""
+        auth_as("user-prod")
+        with patch("app.main.IS_SANDBOX", False):
+            _link_and_exchange(client)
+            with patch("app.main.remove_item"):
+                client.post("/link/disconnect")
+            _link_and_exchange(client)
+            _link_and_exchange(client)
+        assert client.get("/config").json()["production_connections_used"] == 1
+
+    def test_different_accounts_each_count_once(self, client, auth_as):
+        with patch("app.main.IS_SANDBOX", False):
+            auth_as("user-prod-a")
+            _link_and_exchange(client)
+            auth_as("user-prod-b")
+            _link_and_exchange(client)
+        assert client.get("/config").json()["production_connections_used"] == 2
 
 
 class TestDisconnect:
@@ -818,6 +841,17 @@ class TestAutoBudget:
         auth_as("user-2")
         response = client.get(f"/goals/{goal['id']}/auto-budget")
         assert response.status_code == 404
+
+    def test_second_call_within_cooldown_is_rate_limited(self, client):
+        goal = self._seed_and_create_goal(client)
+        with patch(
+            "app.main.recommend_budget_for_goal",
+            return_value={"suggestions": [], "summary": "x", "source": "none", "error": None},
+        ):
+            first = client.get(f"/goals/{goal['id']}/auto-budget")
+            second = client.get(f"/goals/{goal['id']}/auto-budget")
+        assert first.status_code == 200
+        assert second.status_code == 429
 
     def test_housing_facts_only_fetched_when_housing_has_spend_history(self, client):
         goal = self._seed_and_create_goal(client)  # only Food has history here

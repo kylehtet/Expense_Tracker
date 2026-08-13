@@ -34,9 +34,12 @@ export function CustomSignup() {
     setMessage(null);
     try {
       const credential = await createUserWithEmailAndPassword(auth, email, password);
-      // Best-effort - a failure here shouldn't block account creation, the
-      // in-app banner's "Resend" button covers this case too.
-      sendEmailVerification(credential.user).catch(() => {});
+      // Must be awaited before navigating - window.location.href below tears
+      // down the page immediately, which aborts any still-in-flight request,
+      // including this one if it isn't awaited first. Best-effort beyond
+      // that: a failure here shouldn't block account creation, the in-app
+      // gate's "Resend" button covers this case too.
+      await sendEmailVerification(credential.user).catch(() => {});
       window.location.href = "/";
     } catch (err) {
       setState("error");

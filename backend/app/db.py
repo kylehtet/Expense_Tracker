@@ -58,15 +58,18 @@ class TransactionRecord(Base):
 
 
 class ProductionLinkEvent(Base):
-    """One row per successful Plaid item link while running against Plaid
-    Production (Trial plan). Append-only and never deleted by a disconnect -
-    Trial plan connection slots don't free up when an Item is removed, so
-    this needs to track lifetime usage, not "currently connected" count."""
+    """One row per Firebase account that has EVER linked a real (non-Sandbox)
+    Plaid Item - at most one row per user_id (enforced by the unique
+    constraint below), so an account disconnecting and relinking doesn't
+    burn a second slot against this app's own connection limit. Never
+    deleted by a disconnect - Plaid's own Trial-plan quota doesn't free up
+    when an Item is removed either, so "this account has used a slot" needs
+    to stay true forever, not just while currently connected."""
 
     __tablename__ = "production_link_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, index=True)
+    user_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
 
@@ -163,6 +166,17 @@ def delete_transactions_by_ids(db: Session, user_id: str, transaction_ids: list[
 
 
 def record_production_link(db: Session, user_id: str) -> None:
+    """Idempotent per user_id - a repeat link (e.g. disconnect then reconnect
+    the same account) is a no-op here, so this app's own connection-limit
+    counter reflects distinct accounts that have ever used a slot, not raw
+    link events. Plaid's real Trial-plan quota is a separate, external fact
+    this can't change - relinking the same account still consumes a fresh
+    slot on Plaid's side every time, since Plaid never frees one back up on
+    disconnect. What this fixes is this app's own guardrail undercounting
+    headroom for genuinely new accounts because of one account's churn."""
+    existing = db.scalar(select(ProductionLinkEvent).where(ProductionLinkEvent.user_id == user_id))
+    if existing is not None:
+        return
     db.add(ProductionLinkEvent(user_id=user_id))
     db.commit()
 

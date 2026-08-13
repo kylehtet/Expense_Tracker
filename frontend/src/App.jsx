@@ -7,6 +7,7 @@ import { SandboxBanner } from "./components/SandboxBanner";
 import { VerifyEmailBanner } from "./components/VerifyEmailBanner";
 import { Footer } from "./components/Disclaimer";
 import { ConnectBankButton } from "./components/ConnectBankButton";
+import { VerifyEmailGate } from "./components/VerifyEmailGate";
 import { Dashboard } from "./components/Dashboard";
 import { BudgetSettings } from "./components/BudgetSettings";
 import { Logo } from "./components/Logo";
@@ -229,7 +230,11 @@ function App() {
 
       <main className="mx-auto flex w-full max-w-[1760px] flex-1 flex-col gap-8 px-8 py-8">
         {!linked ? (
-          <ConnectBankButton onLinked={handleLinked} isSandbox={config?.is_sandbox} />
+          emailVerified ? (
+            <ConnectBankButton onLinked={handleLinked} isSandbox={config?.is_sandbox} />
+          ) : (
+            <VerifyEmailGate email={user?.email} />
+          )
         ) : tab === "Dashboard" ? (
           <Dashboard
             status={status}

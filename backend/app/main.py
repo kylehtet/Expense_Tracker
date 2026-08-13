@@ -69,6 +69,13 @@ _last_affordability_check_at: dict[str, datetime] = {}
 RECOMMEND_COOLDOWN_SECONDS = 15
 _last_recommend_at: dict[str, datetime] = {}
 
+# Same shape as RECOMMEND_COOLDOWN_SECONDS above - this was the one LLM
+# endpoint with no cooldown at all (a GET, no less), so it had no guard
+# against a user just refreshing the page repeatedly to re-trigger paid
+# Claude calls.
+AUTO_BUDGET_COOLDOWN_SECONDS = 15
+_last_auto_budget_at: dict[str, datetime] = {}
+
 # Plaid Trial plan cap as of this app's setup (2026-08) - see
 # app.db.ProductionLinkEvent for why this is a lifetime count, not a
 # currently-connected count.
@@ -293,6 +300,17 @@ def _check_recommend_rate_limit(user_id: str) -> None:
             retry_after = round(RECOMMEND_COOLDOWN_SECONDS - elapsed)
             raise HTTPException(status_code=429, detail=f"Rate limited, retry after {retry_after}s")
     _last_recommend_at[user_id] = now
+
+
+def _check_auto_budget_rate_limit(user_id: str) -> None:
+    now = datetime.now(timezone.utc)
+    last = _last_auto_budget_at.get(user_id)
+    if last is not None:
+        elapsed = (now - last).total_seconds()
+        if elapsed < AUTO_BUDGET_COOLDOWN_SECONDS:
+            retry_after = round(AUTO_BUDGET_COOLDOWN_SECONDS - elapsed)
+            raise HTTPException(status_code=429, detail=f"Rate limited, retry after {retry_after}s")
+    _last_auto_budget_at[user_id] = now
 
 
 def _current_month_range() -> tuple[str, str]:
@@ -614,6 +632,8 @@ def get_auto_budget(
     goal = get_goal(db, uid, goal_id)
     if goal is None:
         raise HTTPException(status_code=404, detail="Goal not found")
+
+    _check_auto_budget_rate_limit(uid)
 
     budgets, transactions = _budgets_and_transactions(db, uid)
     required_cut = required_additional_capacity(_goal_as_dict(goal), budgets, transactions)
