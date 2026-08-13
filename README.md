@@ -11,9 +11,9 @@ Educational estimate only, not financial advice, and not a licensed financial se
 
 - **Bank sync** — Plaid Link (Sandbox or Production), read-only, encrypted access token
 - **Six fixed categories** — Housing, Food, Transport, Subscriptions, Entertainment, Other
-- **Budgets** — a monthly limit per category, with AI-recommended starting points from real spending history
+- **Budgets** — a monthly limit per category; the LLM proposes the starting number itself from real spending history (a simple average-based rule is used only as a fallback if the AI call fails) — unlike the rest of the app, this figure is not deterministic
 - **"Can I afford this?"** — a deterministic rules engine checks a purchase against real budget headroom; an LLM only writes the plain-language explanation afterward, never the math
-- **Savings goals** — track progress toward a target, with a pace check that flags when spending is putting a goal behind schedule, plus an auto-budget suggestion to get back on track
+- **Savings goals** — track progress toward a target, with a pace check that flags when spending is putting a goal behind schedule, plus an auto-budget suggestion: the LLM proposes which categories to trim and by how much, but deterministic code enforces a floor (never cuts a category below half its average spend) and rescales the cuts so they provably add up to the amount needed — the model picks the allocation, the code guarantees the total
 - **Recurring charges** — detects subscriptions/recurring merchants from transaction history
 - **Firebase Authentication** — email/password, ID-token based, no separate password stored by this app
 
@@ -24,7 +24,7 @@ Educational estimate only, not financial advice, and not a licensed financial se
 - Auth: Firebase Authentication (frontend SDK) + `firebase-admin` (backend token verification)
 - Bank data: Plaid API (Sandbox by default — see `PLAID_ENV` in `backend/.env.example`)
 - Affordability facts: deterministic rules engine (`backend/app/rules.py`, `app/affordability.py`) + a local Chroma RAG layer (`backend/app/retrieval.py`) for mortgage rates, property tax/insurance, and cost-of-living facts, with sources and freshness shown for every number
-- LLM: Claude API — used only for plain-language explanations, budget recommendations, and auto-budget suggestions, always on top of numbers computed deterministically first
+- LLM: Claude API. The affordability checker's explanation and the auto-budget allocation are both grounded in numbers computed or guaranteed deterministically first; budget recommendations are the one exception — there the LLM proposes the actual figure, not just the phrasing (see `backend/app/recommend.py`)
 
 ## Local setup
 
