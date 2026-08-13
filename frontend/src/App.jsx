@@ -4,6 +4,7 @@ import { auth } from "./firebase";
 import { useAuth } from "./useAuth";
 import { api } from "./api";
 import { SandboxBanner } from "./components/SandboxBanner";
+import { VerifyEmailBanner } from "./components/VerifyEmailBanner";
 import { Footer } from "./components/Disclaimer";
 import { ConnectBankButton } from "./components/ConnectBankButton";
 import { Dashboard } from "./components/Dashboard";
@@ -29,7 +30,7 @@ function timeAgo(date) {
 }
 
 function App() {
-  const { isAuthenticated, loading: authLoading, userId } = useAuth();
+  const { isAuthenticated, loading: authLoading, userId, user, emailVerified } = useAuth();
 
   const [config, setConfig] = useState(null);
   const [linked, setLinked] = useState(false);
@@ -166,6 +167,7 @@ function App() {
   return (
     <div className="flex min-h-screen flex-col bg-ground text-ink">
       <SandboxBanner isSandbox={config?.is_sandbox} />
+      {!emailVerified && <VerifyEmailBanner email={user?.email} />}
 
       <nav className="flex flex-wrap items-center gap-x-[30px] gap-y-1 border-b border-hairline bg-surface px-4 sm:px-[30px]">
         <Logo onClick={() => setShowLanding(true)} />

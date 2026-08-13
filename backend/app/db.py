@@ -12,8 +12,17 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 from app.config import DATABASE_URL
 from app.crypto import decrypt, encrypt
 
-_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=_connect_args)
+# Some providers (older Heroku-style URLs) still hand out "postgres://", which
+# SQLAlchemy 1.4+ rejects outright - psycopg2 accepts either, but SQLAlchemy's
+# dialect lookup wants "postgresql://" specifically. Neon's own URLs already
+# use the right scheme, so this is just defensive for whatever else ends up
+# in DATABASE_URL later.
+_database_url = DATABASE_URL
+if _database_url.startswith("postgres://"):
+    _database_url = _database_url.replace("postgres://", "postgresql://", 1)
+
+_connect_args = {"check_same_thread": False} if _database_url.startswith("sqlite") else {}
+engine = create_engine(_database_url, connect_args=_connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 

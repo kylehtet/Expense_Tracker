@@ -2,6 +2,7 @@ import { useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../firebase";
 import { Corners } from "./Corners";
+import { PasswordField } from "./PasswordField";
 
 const ERROR_MESSAGES = {
   "auth/invalid-credential": "Incorrect email or password.",
@@ -71,19 +72,12 @@ export function CustomLogin() {
                 className="h-[46px] w-full border border-field bg-surface px-3.5 text-[14px] text-ink outline-none focus:border-accent"
               />
             </div>
-            <div>
-              <label className="mb-1.5 block font-mono text-[10px] font-medium uppercase tracking-[.12em] text-ink-faint">
-                Password
-              </label>
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="h-[46px] w-full border border-field bg-surface px-3.5 text-[14px] text-ink outline-none focus:border-accent"
-              />
-            </div>
+            <PasswordField
+              label="Password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
 
             {message && <p className="text-[13px] leading-[1.5] text-crit">{message}</p>}
 

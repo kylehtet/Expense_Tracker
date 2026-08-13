@@ -19,7 +19,7 @@ Educational estimate only, not financial advice, and not a licensed financial se
 
 ## Stack
 
-- Backend: Python (FastAPI + SQLAlchemy + SQLite)
+- Backend: Python (FastAPI + SQLAlchemy). SQLite locally by default; set `DATABASE_URL` to a Postgres connection string (e.g. a free Neon instance) for production
 - Frontend: React 19 + Vite + Tailwind v4
 - Auth: Firebase Authentication (frontend SDK) + `firebase-admin` (backend token verification)
 - Bank data: Plaid API (Sandbox by default — see `PLAID_ENV` in `backend/.env.example`)
@@ -40,6 +40,9 @@ cp .env.example .env
 pytest
 uvicorn app.main:app --reload --port 8000
 ```
+
+`DATABASE_URL` is optional locally — leave it unset and it falls back to a SQLite file
+(`expense_tracker.db`) automatically. Required in production; see Deployment below.
 
 `ENCRYPTION_KEY` (encrypts the Plaid access token at rest):
 ```
@@ -65,14 +68,15 @@ Both need to be running at once for the app to work end to end.
 
 ## Deployment
 
-`render.yaml` at the repo root is a Render Blueprint defining both services (FastAPI backend on
-a persistent disk so linked-bank data survives redeploys, plus the static frontend build). Push
-to GitHub, connect the repo on Render, and it picks up both services from that file — you'll
-still need to fill in the real secrets (Plaid keys, encryption key, Anthropic key, Firebase
-service account JSON, Firebase web config) in Render's dashboard yourself, and add the deployed
-frontend domain to Firebase Console → Authentication → Settings → Authorized domains.
-
-Persistent disks on Render require a paid plan, not the free tier.
+`render.yaml` at the repo root is a Render Blueprint defining both services (FastAPI backend,
+plus the static frontend build) — no persistent disk needed, data lives in Postgres instead, so
+both services fit on Render's free tier. Push to GitHub, connect the repo on Render, and it
+picks up both services from that file. Before the first deploy: provision a free Postgres
+database (Neon or Supabase both work), copy its connection string, and set it as `DATABASE_URL`
+in Render's dashboard. You'll also need to fill in the other real secrets (Plaid keys,
+encryption key, Anthropic key, Firebase service account JSON, Firebase web config) there
+yourself, and add the deployed frontend domain to Firebase Console → Authentication → Settings
+→ Authorized domains.
 
 ## Data & privacy
 

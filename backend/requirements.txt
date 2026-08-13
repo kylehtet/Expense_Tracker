@@ -8,6 +8,7 @@ requests==2.34.2
 anthropic==0.120.2
 pydantic==2.13.4
 SQLAlchemy==2.0.51
+psycopg2-binary==2.9.10
 cryptography==50.0.0
 pytest==9.1.1
 httpx2==2.9.1

@@ -1,24 +1,21 @@
 services:
-  # FastAPI backend. Reads/writes SQLite on a persistent Disk so linked-bank
-  # data survives redeploys - Render's own filesystem is wiped on every deploy
-  # otherwise. Chroma's local vector store is left on ephemeral storage on
-  # purpose: app.retrieval self-seeds it from static JSON + a live fetch the
-  # first time it's queried after a cold start (see retrieve_context), so
-  # losing it costs one slightly slower request, not data.
+  # FastAPI backend. Data lives in Postgres (DATABASE_URL, e.g. a free Neon
+  # instance) rather than on a Render disk, so this runs on Render's free
+  # tier - no persistent disk to pay for. Chroma's local vector store is left
+  # on ephemeral storage on purpose: app.retrieval self-seeds it from static
+  # JSON + a live fetch the first time it's queried after a cold start (see
+  # retrieve_context), so losing it costs one slightly slower request, not
+  # data.
   - type: web
     name: expense-tracker-backend
     runtime: python
     rootDir: backend
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    disk:
-      name: expense-tracker-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: DATABASE_URL
-        value: sqlite:////var/data/expense_tracker.db
+        sync: false
       - key: PLAID_CLIENT_ID
         sync: false
       - key: PLAID_SECRET

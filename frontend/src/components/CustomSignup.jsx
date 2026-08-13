@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { auth } from "../firebase";
 import { Corners } from "./Corners";
+import { PasswordField } from "./PasswordField";
 
 const ERROR_MESSAGES = {
   "auth/email-already-in-use": "An account with that email already exists.",
@@ -32,7 +33,10 @@ export function CustomSignup() {
     setState("loading");
     setMessage(null);
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
+      const credential = await createUserWithEmailAndPassword(auth, email, password);
+      // Best-effort - a failure here shouldn't block account creation, the
+      // in-app banner's "Resend" button covers this case too.
+      sendEmailVerification(credential.user).catch(() => {});
       window.location.href = "/";
     } catch (err) {
       setState("error");
@@ -77,32 +81,26 @@ export function CustomSignup() {
                 className="h-[46px] w-full border border-field bg-surface px-3.5 text-[14px] text-ink outline-none focus:border-accent"
               />
             </div>
-            <div>
-              <label className="mb-1.5 block font-mono text-[10px] font-medium uppercase tracking-[.12em] text-ink-faint">
-                Password
-              </label>
-              <input
-                type="password"
-                required
-                autoComplete="new-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="h-[46px] w-full border border-field bg-surface px-3.5 text-[14px] text-ink outline-none focus:border-accent"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block font-mono text-[10px] font-medium uppercase tracking-[.12em] text-ink-faint">
-                Confirm password
-              </label>
-              <input
-                type="password"
-                required
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="h-[46px] w-full border border-field bg-surface px-3.5 text-[14px] text-ink outline-none focus:border-accent"
-              />
-            </div>
+            <PasswordField
+              label="Password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              hint={
+                <p
+                  className="mt-1.5 text-[12px]"
+                  style={{ color: password.length >= 6 ? "var(--good)" : "var(--ink-faint)" }}
+                >
+                  {password.length >= 6 ? "✓" : "•"} At least 6 characters
+                </p>
+              }
+            />
+            <PasswordField
+              label="Confirm password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
 
             {message && <p className="text-[13px] leading-[1.5] text-crit">{message}</p>}
 
