@@ -56,9 +56,6 @@ export const api = {
 
   setBudget: (category, amount) => request("/budget", { method: "POST", body: { category, amount } }),
 
-  checkAffordability: (price, category, timing, location) =>
-    request("/affordability/check", { method: "POST", body: { price, category, timing, location } }),
-
   recommendBudgets: (months = 6) => request("/budget/recommend", { method: "POST", body: { months } }),
 
   getGoals: (status = "active") => request("/goals", { params: { status } }),
@@ -74,4 +71,8 @@ export const api = {
   abandonGoal: (goalId) => request(`/goals/${goalId}`, { method: "DELETE" }),
 
   getGoalHealth: (goalId) => request(`/goals/${goalId}/health`),
+
+  getAutoBudget: (goalId, location) => request(`/goals/${goalId}/auto-budget`, { params: { location: location || undefined } }),
+
+  getRecurring: () => request("/recurring"),
 };

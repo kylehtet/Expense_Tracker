@@ -5,6 +5,8 @@ from app.goal_tracker import (
     compute_monthly_savings_capacity,
     compute_savings_plan,
     plan_from_affordability_check,
+    redirect_impact,
+    required_additional_capacity,
 )
 
 BUDGETS = {"Housing": 1500.0, "Food": 300.0, "Transport": 550.0, "Entertainment": 100.0}
@@ -156,3 +158,70 @@ class TestCheckGoalHealth:
         # Current capacity is negative, so nothing gets saved by the target
         # date - the full $1000 gap is projected as a shortfall.
         assert health["projected_shortfall"] == 1000.0
+
+
+class TestRedirectImpact:
+    def test_computes_months_sooner_from_an_extra_monthly_amount(self):
+        # Capacity 80/mo, gap 800 -> 10 months. +40/mo -> capacity 120 -> 6.7 months.
+        goal = {"target_amount": 1000.0, "current_saved": 200.0, "category": "Food"}
+        impact = redirect_impact(goal, 40.0, BUDGETS, ON_PACE_TXNS)
+        assert impact == {"months_sooner": 3.3, "newly_reachable": False, "hypothetical_months_to_goal": 6.7}
+
+    def test_none_when_goal_already_achieved(self):
+        goal = {"target_amount": 100.0, "current_saved": 100.0, "category": "Food"}
+        assert redirect_impact(goal, 50.0, BUDGETS, ON_PACE_TXNS) is None
+
+    def test_newly_reachable_when_current_capacity_is_non_positive(self):
+        # Capacity is -230/mo here (overspending) - redirecting $250/mo makes
+        # it positive for the first time, with no "sooner than X" baseline.
+        goal = {"target_amount": 100.0, "current_saved": 0.0, "category": "Entertainment"}
+        impact = redirect_impact(goal, 250.0, BUDGETS, ENTERTAINMENT_OVERSPEND_TXNS)
+        assert impact["newly_reachable"] is True
+        assert impact["months_sooner"] is None
+        assert impact["hypothetical_months_to_goal"] is not None
+
+    def test_none_when_still_unreachable_after_the_redirect(self):
+        goal = {"target_amount": 100.0, "current_saved": 0.0, "category": "Entertainment"}
+        impact = redirect_impact(goal, 20.0, BUDGETS, ENTERTAINMENT_OVERSPEND_TXNS)
+        assert impact is None
+
+    def test_none_when_there_is_no_improvement_to_redirect(self):
+        goal = {"target_amount": 1000.0, "current_saved": 200.0, "category": "Food"}
+        assert redirect_impact(goal, 0.0, BUDGETS, ON_PACE_TXNS) is None
+
+
+class TestRequiredAdditionalCapacity:
+    def test_zero_when_goal_already_achieved(self):
+        goal = {"target_amount": 100.0, "current_saved": 100.0, "category": "Food", "monthly_savings_capacity": 80.0, "target_date": None}
+        assert required_additional_capacity(goal, BUDGETS, ON_PACE_TXNS, today=TODAY) == 0.0
+
+    def test_no_target_date_uses_the_goals_frozen_planned_capacity_as_the_bar(self):
+        # Planned capacity 200/mo, current real capacity 80/mo -> 120 short.
+        goal = {"target_amount": 5000.0, "current_saved": 0.0, "category": "Food", "monthly_savings_capacity": 200.0, "target_date": None}
+        assert required_additional_capacity(goal, BUDGETS, ON_PACE_TXNS, today=TODAY) == 120.0
+
+    def test_zero_when_already_meeting_or_beating_the_frozen_planned_capacity(self):
+        goal = {"target_amount": 5000.0, "current_saved": 0.0, "category": "Food", "monthly_savings_capacity": 50.0, "target_date": None}
+        assert required_additional_capacity(goal, BUDGETS, ON_PACE_TXNS, today=TODAY) == 0.0
+
+    def test_target_date_derives_the_needed_pace_from_the_gap_and_months_remaining(self):
+        # Gap 1000, target 5 months out (2026-08 -> 2027-01) -> needed 200/mo,
+        # current real capacity 80/mo -> 120 short.
+        goal = {"target_amount": 1000.0, "current_saved": 0.0, "category": "Food", "monthly_savings_capacity": 80.0, "target_date": "2027-01-07"}
+        assert required_additional_capacity(goal, BUDGETS, ON_PACE_TXNS, today=TODAY) == 120.0
+
+    def test_target_date_scales_with_overspending(self):
+        # Same goal/target date (needed 200/mo), but current capacity is
+        # -230/mo (overspending) -> 430 short.
+        goal = {"target_amount": 1000.0, "current_saved": 0.0, "category": "Food", "monthly_savings_capacity": 80.0, "target_date": "2027-01-07"}
+        assert required_additional_capacity(goal, BUDGETS, ENTERTAINMENT_OVERSPEND_TXNS, today=TODAY) == 430.0
+
+    def test_no_target_date_floors_a_non_positive_frozen_capacity_at_breakeven(self):
+        # The goal was created when capacity was already -230/mo (never a
+        # viable plan) and nothing has changed since. Literally using -230 as
+        # the bar would report 0 required ("on pace" for staying exactly as
+        # behind as day one) - matching check_goal_health's "always behind
+        # when planned <= 0" stance instead, the bar floors at breakeven (0),
+        # so this reports 230 short, not 0.
+        goal = {"target_amount": 2000.0, "current_saved": 0.0, "category": "Entertainment", "monthly_savings_capacity": -230.0, "target_date": None}
+        assert required_additional_capacity(goal, BUDGETS, ENTERTAINMENT_OVERSPEND_TXNS, today=TODAY) == 230.0

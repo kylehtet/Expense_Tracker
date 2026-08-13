@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -157,7 +157,8 @@ class TestLinkExchange:
         assert "access_token" not in response.text
 
     def test_sandbox_exchange_does_not_count_against_production_limit(self, client):
-        _link_and_exchange(client)
+        with patch("app.main.IS_SANDBOX", True):
+            _link_and_exchange(client)
         assert client.get("/config").json()["production_connections_used"] == 0
 
     def test_production_exchange_increments_the_counter(self, client, auth_as):
@@ -197,7 +198,7 @@ class TestDisconnect:
                 "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
             }
         ]
-        with patch("app.main.fetch_transactions", return_value=raw):
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
             client.post("/sync")
         assert len(client.get("/transactions").json()) == 1
 
@@ -246,7 +247,7 @@ class TestSync:
                 "personal_finance_category": {"primary": "ENTERTAINMENT", "detailed": "ENTERTAINMENT_TV_AND_MOVIES"},
             },
         ]
-        with patch("app.main.fetch_transactions", return_value=raw_transactions):
+        with patch("app.main.fetch_transactions", return_value={"added": raw_transactions, "modified": [], "removed": []}):
             response = client.post("/sync")
 
         assert response.status_code == 200
@@ -256,9 +257,59 @@ class TestSync:
         categories = {t["transaction_id"]: t["category"] for t in transactions}
         assert categories == {"tx1": "Housing", "tx2": "Subscriptions"}
 
+    def test_modified_transaction_updates_the_existing_record(self, client):
+        """A pending charge settling (amount/date changing on an already-synced
+        transaction_id) comes back from Plaid as "modified", not a new "added" -
+        the sync endpoint must still pick it up."""
+        _link_and_exchange(client)
+        pending = {
+            "transaction_id": "tx1",
+            "date": "2026-07-01",
+            "name": "Restaurant",
+            "amount": 0.0,
+            "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+        }
+        with patch("app.main.fetch_transactions", return_value={"added": [pending], "modified": [], "removed": []}):
+            client.post("/sync")
+
+        _last_sync_at.clear()
+        settled = {**pending, "amount": 42.5}
+        with patch("app.main.fetch_transactions", return_value={"added": [], "modified": [settled], "removed": []}):
+            response = client.post("/sync")
+
+        assert response.status_code == 200
+        assert response.json() == {"synced_count": 1}
+        transactions = client.get("/transactions").json()
+        assert len(transactions) == 1
+        assert transactions[0]["amount"] == 42.5
+
+    def test_removed_transaction_is_deleted(self, client):
+        """A reversed/cancelled transaction comes back from Plaid as "removed" (just
+        an id) - it should disappear locally too, not linger after the bank retracts it."""
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-07-01",
+                "name": "Restaurant",
+                "amount": 42.5,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
+            client.post("/sync")
+
+        _last_sync_at.clear()
+        with patch("app.main.fetch_transactions", return_value={"added": [], "modified": [], "removed": ["tx1"]}):
+            response = client.post("/sync")
+
+        assert response.status_code == 200
+        assert response.json() == {"synced_count": 0}
+        assert client.get("/transactions").json() == []
+
     def test_second_sync_within_cooldown_is_rate_limited(self, client):
         _link_and_exchange(client)
-        with patch("app.main.fetch_transactions", return_value=[]):
+        with patch("app.main.fetch_transactions", return_value={"added": [], "modified": [], "removed": []}):
             first = client.post("/sync")
             second = client.post("/sync")
 
@@ -268,12 +319,12 @@ class TestSync:
     def test_different_users_have_independent_rate_limits(self, client, auth_as):
         auth_as("user-1")
         _link_and_exchange(client)
-        with patch("app.main.fetch_transactions", return_value=[]):
+        with patch("app.main.fetch_transactions", return_value={"added": [], "modified": [], "removed": []}):
             first = client.post("/sync")
 
         auth_as("user-2")
         _link_and_exchange(client)
-        with patch("app.main.fetch_transactions", return_value=[]):
+        with patch("app.main.fetch_transactions", return_value={"added": [], "modified": [], "removed": []}):
             second = client.post("/sync")
 
         assert first.status_code == 200
@@ -309,7 +360,7 @@ class TestTransactions:
                 "personal_finance_category": {"primary": "RENT_AND_UTILITIES"},
             },
         ]
-        with patch("app.main.fetch_transactions", return_value=raw):
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
             client.post("/sync")
 
     def test_filters_by_category(self, client):
@@ -367,7 +418,7 @@ class TestBudget:
                 "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
             },
         ]
-        with patch("app.main.fetch_transactions", return_value=raw):
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
             client.post("/sync")
 
         client.post("/budget", json={"category": "Housing", "amount": 1500.0})
@@ -403,7 +454,7 @@ class TestAffordabilityCheck:
                 "personal_finance_category": {"primary": "ENTERTAINMENT"},
             }
         ]
-        with patch("app.main.fetch_transactions", return_value=raw):
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
             client.post("/sync")
         client.post("/budget", json={"category": "Entertainment", "amount": 500.0})
 
@@ -565,7 +616,7 @@ class TestGoals:
                 "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
             },
         ]
-        with patch("app.main.fetch_transactions", return_value=raw):
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
             client.post("/sync")
         client.post("/budget", json={"category": "Food", "amount": 300.0})
 
@@ -661,6 +712,171 @@ class TestGoals:
         assert client.get("/goals").json() == []
 
 
+class TestAutoBudget:
+    def _seed_and_create_goal(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-05-15",
+                "name": "Whole Foods",
+                "amount": 100.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            },
+            {
+                "transaction_id": "tx2",
+                "date": "2026-06-15",
+                "name": "Whole Foods",
+                "amount": 100.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            },
+            {
+                "transaction_id": "tx3",
+                "date": "2026-07-20",
+                "name": "Whole Foods",
+                "amount": 50.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            },
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
+            client.post("/sync")
+        client.post("/budget", json={"category": "Food", "amount": 300.0})
+        goal = client.post("/goals", json={"name": "Vacation", "target_amount": 500.0, "category": "Food"}).json()
+
+        # More spend after the goal was created, so current capacity (150)
+        # drops below the frozen planned capacity (216.67) - required_cut > 0.
+        # Bypass the sync cooldown for this second, same-test sync call - a
+        # real user would just wait, but nothing here is testing the cooldown.
+        _last_sync_at.clear()
+        raw_more = raw + [
+            {
+                "transaction_id": "tx4",
+                "date": "2026-07-25",
+                "name": "Whole Foods",
+                "amount": 200.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw_more, "modified": [], "removed": []}):
+            client.post("/sync")
+
+        return goal
+
+    def test_not_needed_when_goal_is_on_pace(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-05-15",
+                "name": "Whole Foods",
+                "amount": 100.0,
+                "personal_finance_category": {"primary": "FOOD_AND_DRINK"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
+            client.post("/sync")
+        client.post("/budget", json={"category": "Food", "amount": 300.0})
+        goal = client.post("/goals", json={"name": "Vacation", "target_amount": 500.0, "category": "Food"}).json()
+
+        response = client.get(f"/goals/{goal['id']}/auto-budget")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["required_cut"] == 0.0
+        assert body["suggestions"] == []
+        assert body["source"] == "not_needed"
+
+    def test_returns_suggestions_scaled_to_the_required_cut(self, client):
+        goal = self._seed_and_create_goal(client)
+
+        with patch(
+            "app.main.recommend_budget_for_goal",
+            return_value={
+                "suggestions": [{"category": "Food", "suggested_budget": 200.0, "rationale": "Trim toward your goal."}],
+                "summary": "Cutting Food gets you there.",
+                "source": "ai",
+                "error": None,
+            },
+        ) as mock_recommend:
+            response = client.get(f"/goals/{goal['id']}/auto-budget")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["required_cut"] == 66.67
+        assert body["suggestions"] == [{"category": "Food", "suggested_budget": 200.0, "rationale": "Trim toward your goal."}]
+        assert body["source"] == "ai"
+        # required_cut passed through to the allocator, not recomputed there.
+        assert mock_recommend.call_args[0][1] == 66.67
+
+    def test_404s_for_unknown_goal(self, client):
+        response = client.get("/goals/999/auto-budget")
+        assert response.status_code == 404
+
+    def test_different_users_have_independent_auto_budgets(self, client, auth_as):
+        auth_as("user-1")
+        goal = self._seed_and_create_goal(client)
+
+        auth_as("user-2")
+        response = client.get(f"/goals/{goal['id']}/auto-budget")
+        assert response.status_code == 404
+
+    def test_housing_facts_only_fetched_when_housing_has_spend_history(self, client):
+        goal = self._seed_and_create_goal(client)  # only Food has history here
+
+        with patch("app.main.retrieve_housing_context") as retrieve_housing_context, patch(
+            "app.main.recommend_budget_for_goal",
+            return_value={"suggestions": [], "summary": "x", "source": "ai", "error": None},
+        ):
+            client.get(f"/goals/{goal['id']}/auto-budget")
+
+        retrieve_housing_context.assert_not_called()
+
+    def test_location_query_param_is_passed_through_to_housing_facts(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-07-15",
+                "name": "Tectra Inc",
+                "amount": 1500.0,
+                "personal_finance_category": {"primary": "RENT_AND_UTILITIES"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
+            client.post("/sync")
+        goal = client.post("/goals", json={"name": "New home", "target_amount": 1000.0, "category": "Housing"}).json()
+
+        with patch("app.main.retrieve_housing_context", return_value=[]) as retrieve_housing_context, patch(
+            "app.main.recommend_budget_for_goal",
+            return_value={"suggestions": [], "summary": "x", "source": "not_needed", "error": None},
+        ):
+            client.get(f"/goals/{goal['id']}/auto-budget", params={"location": "Austin, TX"})
+
+        retrieve_housing_context.assert_called_once_with("Austin, TX")
+
+    def test_no_location_param_still_fetches_national_facts(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-07-15",
+                "name": "Tectra Inc",
+                "amount": 1500.0,
+                "personal_finance_category": {"primary": "RENT_AND_UTILITIES"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
+            client.post("/sync")
+        goal = client.post("/goals", json={"name": "New home", "target_amount": 1000.0, "category": "Housing"}).json()
+
+        with patch("app.main.retrieve_housing_context", return_value=[]) as retrieve_housing_context, patch(
+            "app.main.recommend_budget_for_goal",
+            return_value={"suggestions": [], "summary": "x", "source": "not_needed", "error": None},
+        ):
+            client.get(f"/goals/{goal['id']}/auto-budget")
+
+        retrieve_housing_context.assert_called_once_with("")
+
+
 class TestBudgetRecommend:
     def test_no_history_returns_empty_recommendations(self, client):
         response = client.post("/budget/recommend", json={})
@@ -687,7 +903,7 @@ class TestBudgetRecommend:
                 "personal_finance_category": {"primary": "RENT_AND_UTILITIES"},
             },
         ]
-        with patch("app.main.fetch_transactions", return_value=raw):
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
             client.post("/sync")
 
         with patch(
@@ -721,3 +937,94 @@ class TestBudgetRecommend:
             second = client.post("/budget/recommend", json={})
         assert first.status_code == 200
         assert second.status_code == 429
+
+
+class TestRecurring:
+    def _seed_recurring(self, client, days_ago_list, amount=15.99, name="NETFLIX.COM", merchant_name="Netflix"):
+        _link_and_exchange(client)
+        today = datetime.now(timezone.utc).date()
+        raw = [
+            {
+                "transaction_id": f"recurring-{i}",
+                "date": (today - timedelta(days=d)).isoformat(),
+                "name": name,
+                "merchant_name": merchant_name,
+                "amount": amount,
+                "personal_finance_category": {"primary": "GENERAL_SERVICES"},
+            }
+            for i, d in enumerate(days_ago_list)
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
+            client.post("/sync")
+
+    def test_detects_recurring_charge_from_synced_transactions(self, client):
+        self._seed_recurring(client, [62, 32, 2])  # three ~30-day-apart charges
+        response = client.get("/recurring")
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        assert body[0]["merchant"] == "Netflix"
+        assert body[0]["average_amount"] == 15.99
+        assert body[0]["occurrences"] == 3
+        assert body[0]["impact_on_goals"] is None
+
+    def test_verdict_is_comfortable_with_no_budget_set(self, client):
+        self._seed_recurring(client, [62, 32, 2])
+        assert client.get("/recurring").json()[0]["verdict"] == "comfortable"
+
+    def test_verdict_is_comfortable_with_generous_budget(self, client):
+        self._seed_recurring(client, [62, 32, 2])
+        client.post("/budget", json={"category": "Subscriptions", "amount": 100.0})
+        assert client.get("/recurring").json()[0]["verdict"] == "comfortable"
+
+    def test_verdict_is_over_when_the_charge_alone_exceeds_its_budget(self, client):
+        self._seed_recurring(client, [62, 32, 2])
+        client.post("/budget", json={"category": "Subscriptions", "amount": 10.0})
+        assert client.get("/recurring").json()[0]["verdict"] == "over"
+
+    def test_verdict_is_tight_when_over_its_own_category_but_the_overall_budget_has_room(self, client):
+        self._seed_recurring(client, [62, 32, 2])
+        client.post("/budget", json={"category": "Subscriptions", "amount": 10.0})
+        client.post("/budget", json={"category": "Food", "amount": 1000.0})
+        assert client.get("/recurring").json()[0]["verdict"] == "tight"
+
+    def test_no_recurring_charges_returns_empty_list(self, client):
+        _link_and_exchange(client)
+        response = client.get("/recurring")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_a_single_charge_is_not_flagged_as_recurring(self, client):
+        self._seed_recurring(client, [2])
+        assert client.get("/recurring").json() == []
+
+    def test_impact_on_goals_omitted_without_active_goals(self, client):
+        self._seed_recurring(client, [62, 32, 2])
+        assert client.get("/recurring").json()[0]["impact_on_goals"] is None
+
+    def test_impact_on_goals_computed_for_an_active_goal(self, client):
+        # Housing budget 30/mo with no Housing spend -> capacity 30/mo.
+        # Redirecting a $20/mo charge -> capacity 50/mo. Goal gap 100 ->
+        # 3.3 months at current pace, 2.0 months redirected -> 1.3 sooner.
+        self._seed_recurring(client, [62, 32, 2], amount=20.0)
+        client.post("/budget", json={"category": "Housing", "amount": 30.0})
+        goal = client.post("/goals", json={"name": "Vacation", "target_amount": 100.0, "category": "Housing"}).json()
+
+        response = client.get("/recurring")
+        body = response.json()
+        assert body[0]["impact_on_goals"] == [
+            {
+                "goal_id": goal["id"],
+                "goal_name": "Vacation",
+                "months_sooner": 1.3,
+                "newly_reachable": False,
+                "hypothetical_months_to_goal": 2.0,
+            }
+        ]
+
+    def test_different_users_have_independent_recurring_charges(self, client, auth_as):
+        auth_as("user-1")
+        self._seed_recurring(client, [62, 32, 2])
+
+        auth_as("user-2")
+        assert client.get("/recurring").json() == []

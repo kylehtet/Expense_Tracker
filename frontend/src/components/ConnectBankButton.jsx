@@ -13,9 +13,11 @@ const POINTS = [
 export function ConnectBankButton({ onLinked, isSandbox }) {
   const [linkToken, setLinkToken] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | idle | linking | error
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setStatus("loading");
     api
       .createLinkToken()
       .then(({ link_token }) => {
@@ -28,7 +30,7 @@ export function ConnectBankButton({ onLinked, isSandbox }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [retryCount]);
 
   const onSuccess = useCallback(
     async (publicToken) => {
@@ -84,20 +86,30 @@ export function ConnectBankButton({ onLinked, isSandbox }) {
             </p>
           </div>
         )}
-        <button
-          onClick={() => open()}
-          disabled={!ready || status === "linking"}
-          className="blueprint relative inline-flex items-center bg-accent-deep px-6 py-3.5 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ground hover:bg-accent-press disabled:opacity-50"
-        >
-          <Corners />
-          {status === "linking" ? "Connecting…" : "Launch Plaid Link"}
-        </button>
+        {status === "error" ? (
+          <button
+            onClick={() => setRetryCount((n) => n + 1)}
+            className="blueprint relative inline-flex items-center bg-accent-deep px-6 py-3.5 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ground hover:bg-accent-press"
+          >
+            <Corners />
+            Try again
+          </button>
+        ) : (
+          <button
+            onClick={() => open()}
+            disabled={!ready || status === "linking"}
+            className="blueprint relative inline-flex items-center bg-accent-deep px-6 py-3.5 font-display text-[15px] font-semibold uppercase tracking-[.05em] text-ground hover:bg-accent-press disabled:opacity-50"
+          >
+            <Corners />
+            {status === "linking" ? "Connecting…" : "Launch Plaid Link"}
+          </button>
+        )}
         <p className="mt-4 text-[12.5px] text-ink-faint">
           Takes about 30 seconds. You can disconnect at any time from Settings.
         </p>
         {status === "error" && (
           <p className="mt-2 text-[13px] text-crit">
-            Something went wrong connecting to Plaid. Try again.
+            Something went wrong connecting to Plaid. Click "Try again" above.
           </p>
         )}
       </div>

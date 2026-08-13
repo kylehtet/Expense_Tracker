@@ -138,6 +138,21 @@ def delete_transactions_for_user(db: Session, user_id: str) -> int:
     return result.rowcount
 
 
+def delete_transactions_by_ids(db: Session, user_id: str, transaction_ids: list[str]) -> int:
+    """Removes transactions Plaid has reported as reversed/cancelled (sync's "removed"
+    list) so a real account doesn't keep showing them after the bank has retracted them."""
+    if not transaction_ids:
+        return 0
+    result = db.execute(
+        delete(TransactionRecord).where(
+            TransactionRecord.user_id == user_id,
+            TransactionRecord.transaction_id.in_(transaction_ids),
+        )
+    )
+    db.commit()
+    return result.rowcount
+
+
 def record_production_link(db: Session, user_id: str) -> None:
     db.add(ProductionLinkEvent(user_id=user_id))
     db.commit()

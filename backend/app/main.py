@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.affordability import check_purchase
 from app.budget import budget_status
 from app.categorize import categorize_transaction
-from app.config import IS_SANDBOX, PLAID_ENV
+from app.config import ALLOWED_ORIGINS, IS_SANDBOX, PLAID_ENV
 from app.db import (
     GoalRecord,
     TransactionRecord,
@@ -22,6 +22,7 @@ from app.db import (
     count_production_links,
     create_goal,
     delete_item,
+    delete_transactions_by_ids,
     delete_transactions_for_user,
     get_access_token,
     get_budgets,
@@ -36,11 +37,19 @@ from app.db import (
     update_goal,
     upsert_transactions,
 )
+from app.auto_budget import recommend_budget_for_goal
 from app.explain import explain_verdict
-from app.firebase_auth import require_firebase_auth
-from app.goal_tracker import check_goal_health, compute_monthly_savings_capacity, plan_from_affordability_check
+from app.firebase_auth import init_firebase_app, require_firebase_auth
+from app.goal_tracker import (
+    check_goal_health,
+    compute_monthly_savings_capacity,
+    plan_from_affordability_check,
+    redirect_impact,
+    required_additional_capacity,
+)
 from app.plaid_client import create_link_token, exchange_public_token, fetch_transactions, remove_item
-from app.recommend import recommend_budgets
+from app.recommend import recommend_budgets, spending_profile
+from app.recurring import detect_recurring_charges
 from app.retrieval import retrieve_housing_context
 
 # Single-process, in-memory cooldown. Fine for the MVP's single-worker demo
@@ -69,6 +78,7 @@ PRODUCTION_CONNECTION_LIMIT = 10
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    init_firebase_app()
     yield
 
 
@@ -76,7 +86,7 @@ app = FastAPI(title="Expense Tracker", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -219,6 +229,39 @@ class GoalActionResponse(BaseModel):
     status: str
 
 
+class CategoryBudgetSuggestionOut(BaseModel):
+    category: str
+    suggested_budget: float
+    rationale: str
+
+
+class AutoBudgetOut(BaseModel):
+    required_cut: float
+    suggestions: list[CategoryBudgetSuggestionOut]
+    summary: str
+    source: str
+
+
+class RecurringGoalImpactOut(BaseModel):
+    goal_id: int
+    goal_name: str
+    months_sooner: Optional[float]
+    newly_reachable: bool
+    hypothetical_months_to_goal: Optional[float]
+
+
+class RecurringChargeOut(BaseModel):
+    merchant: str
+    average_amount: float
+    category: str
+    occurrences: int
+    first_seen: str
+    last_charged: str
+    next_charge_estimate: str
+    verdict: str
+    impact_on_goals: Optional[list[RecurringGoalImpactOut]] = None
+
+
 def _check_sync_rate_limit(user_id: str) -> None:
     now = datetime.now(timezone.utc)
     last = _last_sync_at.get(user_id)
@@ -320,6 +363,16 @@ def _budgets_and_transactions(db: DbSession, user_id: str) -> tuple[dict, list[d
     return budgets, transactions
 
 
+def _transactions_for_recurring(transactions: list[TransactionRecord]) -> list[dict]:
+    """Unlike _transactions_as_dicts, recurring-charge detection groups by
+    merchant, so it needs the name/merchant_name fields that function
+    deliberately leaves out."""
+    return [
+        {"date": t.date, "amount": t.amount, "category": t.category, "name": t.name, "merchant_name": t.merchant_name}
+        for t in transactions
+    ]
+
+
 @app.get("/config", response_model=ConfigOut)
 def get_config(db: DbSession = Depends(get_db)) -> ConfigOut:
     return ConfigOut(
@@ -386,7 +439,7 @@ def sync(decoded_token: dict = Depends(require_firebase_auth), db: DbSession = D
     if access_token is None:
         raise HTTPException(status_code=404, detail="No linked bank account for this user")
 
-    raw_transactions = fetch_transactions(access_token)
+    changes = fetch_transactions(access_token)
     categorized = [
         {
             "transaction_id": txn["transaction_id"],
@@ -396,9 +449,10 @@ def sync(decoded_token: dict = Depends(require_firebase_auth), db: DbSession = D
             "amount": txn["amount"],
             "category": categorize_transaction(txn),
         }
-        for txn in raw_transactions
+        for txn in changes["added"] + changes["modified"]
     ]
     count = upsert_transactions(db, uid, categorized)
+    delete_transactions_by_ids(db, uid, changes["removed"])
     return SyncResponse(synced_count=count)
 
 
@@ -549,6 +603,36 @@ def get_goal_health(
     return GoalHealthOut(**check_goal_health(_goal_as_dict(goal), budgets, transactions))
 
 
+@app.get("/goals/{goal_id}/auto-budget", response_model=AutoBudgetOut)
+def get_auto_budget(
+    goal_id: int,
+    location: Optional[str] = None,
+    decoded_token: dict = Depends(require_firebase_auth),
+    db: DbSession = Depends(get_db),
+) -> AutoBudgetOut:
+    uid = decoded_token["uid"]
+    goal = get_goal(db, uid, goal_id)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="Goal not found")
+
+    budgets, transactions = _budgets_and_transactions(db, uid)
+    required_cut = required_additional_capacity(_goal_as_dict(goal), budgets, transactions)
+    profile = spending_profile(transactions)
+    # location is optional and client-supplied (this app has no stored user
+    # profile) - retrieve_housing_context still returns current national
+    # mortgage-rate facts unconditionally either way, and adds local
+    # property-tax/cost-of-living facts only when a city is given.
+    housing_facts = _housing_context(location) if "Housing" in profile else None
+
+    result = recommend_budget_for_goal(goal.name, required_cut, profile, budgets, housing_facts)
+    return AutoBudgetOut(
+        required_cut=required_cut,
+        suggestions=[CategoryBudgetSuggestionOut(**s) for s in result["suggestions"]],
+        summary=result["summary"],
+        source=result["source"],
+    )
+
+
 @app.patch("/goals/{goal_id}", response_model=GoalOut)
 def update_goal_endpoint(
     goal_id: int,
@@ -581,3 +665,37 @@ def delete_goal_endpoint(
     if goal is None:
         raise HTTPException(status_code=404, detail="Goal not found")
     return GoalActionResponse(status="abandoned")
+
+
+@app.get("/recurring", response_model=list[RecurringChargeOut])
+def get_recurring(
+    decoded_token: dict = Depends(require_firebase_auth),
+    db: DbSession = Depends(get_db),
+) -> list[RecurringChargeOut]:
+    uid = decoded_token["uid"]
+    transactions = get_transactions(db, uid)
+    charges = detect_recurring_charges(_transactions_for_recurring(transactions))
+
+    status = _current_status(db, uid)
+    active_goals = get_goals(db, uid, status="active")
+    budgets, all_transactions = _budgets_and_transactions(db, uid)
+
+    results = []
+    for charge in charges:
+        # A recurring charge is an ongoing monthly commitment, not a one-time
+        # purchase - check it against the budget the same way a "monthly"
+        # timing purchase would be, so the verdict reflects it recurring
+        # every month rather than just this one time.
+        verdict = check_purchase(status, charge["average_amount"], charge["category"], "monthly")["verdict"]
+
+        impact_on_goals = None
+        if active_goals:
+            impact_on_goals = []
+            for goal in active_goals:
+                impact = redirect_impact(_goal_as_dict(goal), charge["average_amount"], budgets, all_transactions)
+                if impact is not None:
+                    impact_on_goals.append(
+                        RecurringGoalImpactOut(goal_id=goal.id, goal_name=goal.name, **impact)
+                    )
+        results.append(RecurringChargeOut(**charge, verdict=verdict, impact_on_goals=impact_on_goals))
+    return results

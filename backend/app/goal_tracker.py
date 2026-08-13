@@ -94,6 +94,70 @@ def _add_months(start: date, months: float) -> str:
     return date(year, month, 1).isoformat()
 
 
+def redirect_impact(goal: dict, extra_monthly_amount: float, budgets: dict, transactions: list) -> Optional[dict]:
+    """What redirecting `extra_monthly_amount` (e.g. a subscription the user
+    could cancel) toward this goal, on top of its current real pace, would do
+    to its completion time. Returns None when there's nothing worth showing:
+    the goal's already achieved, or the redirect still leaves it unreachable,
+    or the improvement isn't a meaningful one."""
+    gap = round(goal["target_amount"] - goal["current_saved"], 2)
+    if gap <= 0:
+        return None
+
+    current_capacity = compute_monthly_savings_capacity(budgets, transactions)
+    hypothetical_capacity = current_capacity + extra_monthly_amount
+
+    if hypothetical_capacity <= 0:
+        return None  # still wouldn't be reachable even with the redirect
+
+    hypothetical_months = round(gap / hypothetical_capacity, 1)
+
+    if current_capacity <= 0:
+        # Wasn't on pace to ever get there - the redirect makes it reachable
+        # for the first time, which is worth surfacing even with no "sooner
+        # by N months" baseline to compare against.
+        return {"months_sooner": None, "newly_reachable": True, "hypothetical_months_to_goal": hypothetical_months}
+
+    current_months = gap / current_capacity
+    months_sooner = round(current_months - hypothetical_months, 1)
+    if months_sooner <= 0:
+        return None
+
+    return {"months_sooner": months_sooner, "newly_reachable": False, "hypothetical_months_to_goal": hypothetical_months}
+
+
+def required_additional_capacity(goal: dict, budgets: dict, transactions: list, today: Optional[date] = None) -> float:
+    """How much *more* monthly savings capacity this goal needs beyond what
+    current budgets/spending already provide - the number app.auto_budget
+    tries to free up by cutting category budgets. 0.0 means the goal is
+    already on pace, deterministically, with nothing to suggest."""
+    today = today or date.today()
+    gap = max(goal["target_amount"] - goal["current_saved"], 0.0)
+    if gap <= 0:
+        return 0.0
+
+    current_capacity = compute_monthly_savings_capacity(budgets, transactions)
+
+    if goal.get("target_date"):
+        target = date.fromisoformat(goal["target_date"])
+        months_until_target = max((target.year - today.year) * 12 + (target.month - today.month), 1)
+        needed_capacity = gap / months_until_target
+    else:
+        # No target date - the bar to clear is the pace captured when the
+        # goal was created, not a fresh one derived from the gap (which
+        # would demand a faster and faster pace as time runs out on nothing).
+        # But a frozen capacity that was already non-positive at creation
+        # means the goal was never on a viable plan to begin with - matches
+        # check_goal_health's stance (pace_ratio is forced to "behind"
+        # whenever planned_capacity <= 0). The bar to clear is then at least
+        # breaking even, not literally matching an already-broken baseline
+        # (which would otherwise report "on pace" simply for staying exactly
+        # as behind as the day the goal was created).
+        needed_capacity = max(goal["monthly_savings_capacity"], 0.0)
+
+    return round(max(needed_capacity - current_capacity, 0.0), 2)
+
+
 def check_goal_health(goal: dict, budgets: dict, transactions: list, today: Optional[date] = None) -> dict:
     """Compares a goal's original planned pace (monthly_savings_capacity,
     captured at creation time) against the *current* actual pace, computed

@@ -5,7 +5,6 @@ const GITHUB_URL = "https://github.com/kylehtet/can_u_afford_it";
 const NAV_LINKS = [
   { href: "#how", label: "How it works" },
   { href: "#privacy", label: "Your data" },
-  { href: "#run", label: "Run it" },
 ];
 
 // Demo data for the dashboard preview - illustrative only, not live figures.
@@ -79,22 +78,6 @@ const PRIVACY = [
     body: "No analytics, no tracking pixels, no third-party scripts on this page or in the app beyond Plaid itself. The source is public — check it.",
   },
 ];
-
-const INSTALL = `git clone ${GITHUB_URL}
-cd can_u_afford_it/backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-#   PLAID_CLIENT_ID=...
-#   PLAID_SECRET=...
-#   PLAID_ENV=sandbox
-#   ENCRYPTION_KEY=...   (see .env.example to generate one)
-uvicorn app.main:app --reload --port 8000
-
-# in a second terminal
-cd can_u_afford_it/frontend
-npm install
-npm run dev             # http://localhost:5173`;
 
 function LogoMark() {
   return (
@@ -196,7 +179,7 @@ function HowItWorksSheet() {
     <div className="blueprint relative border border-hairline">
       <Corners />
       <div className="flex flex-wrap items-stretch border-b border-hairline font-display text-[12.5px] font-semibold uppercase tracking-[.08em]">
-        <span className="min-w-[16ch] flex-1 px-6 py-3">Expense Tracker — personal finance, self-hosted</span>
+        <span className="min-w-[16ch] flex-1 px-6 py-3">Expense Tracker — personal finance, synced from your bank</span>
         <span className="whitespace-nowrap border-l border-hairline px-6 py-3 text-ink-muted">Doc ET-01</span>
         <span className="whitespace-nowrap border-l border-hairline px-6 py-3 text-ink-muted">Rev. 2026.08</span>
         <span className="whitespace-nowrap border-l border-hairline px-6 py-3 text-ink-muted">Sheet 1 of 1</span>
@@ -270,15 +253,13 @@ export function LandingPage({ onTryDemo }) {
 
       <section className="mx-auto max-w-[1200px] px-5 pb-[72px] pt-24 sm:px-[72px]">
         <h1 className="m-0 font-display text-[clamp(48px,7vw,92px)] font-semibold uppercase leading-[1.04] tracking-[.01em] text-ink">
-          <span className="block">Your spending,</span>
-          <span className="block">in six categories,</span>
-          <span className="block text-accent-deep">synced from your bank.</span>
+          <span className="block">See what you can afford</span>
+          <span className="block text-accent-deep">before you spend it.</span>
         </h1>
         <p className="m-0 mt-8 max-w-[62ch] text-[17px] leading-[1.6] text-ink">
-          Connect your bank through Plaid and Expense Tracker sorts your transactions into six
-          categories, tracks them against budgets you set, and tells you what you can actually
-          afford before you spend. It's free to use, and the source is public — nothing about how
-          it handles your data is hidden.
+          Connect your bank through Plaid and Expense Tracker checks purchases against your real
+          budget, tracks savings goals, and flags subscriptions quietly working against them. It's
+          free to use, and the source is public — nothing about how it handles your data is hidden.
         </p>
         <div className="mt-8 flex flex-wrap items-center gap-5">
           <button
@@ -324,8 +305,8 @@ export function LandingPage({ onTryDemo }) {
         </span>
         <hr className="mb-7 h-px border-0 bg-hairline" />
         <p className="m-0 mb-7 max-w-[64ch] text-[16px] leading-[1.6] text-ink">
-          There's no separate Expense Tracker account. You run the server yourself, so the only
-          parties in the loop are you, your bank, and Plaid.
+          Signing in creates an Expense Tracker account, separate from your bank login. The only
+          parties in the loop after that are you, your bank, and Plaid.
         </p>
         <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
           {PRIVACY.map((p) => (
@@ -343,33 +324,6 @@ export function LandingPage({ onTryDemo }) {
         </div>
       </section>
 
-      <section id="run" className="mx-auto max-w-[1200px] scroll-mt-[76px] px-5 pb-24 sm:px-[72px]">
-        <span className="mb-3 block font-display text-[13px] font-semibold uppercase tracking-[.08em] text-accent-deep">
-          03 &middot; Run it yourself
-        </span>
-        <hr className="mb-7 h-px border-0 bg-hairline" />
-        <div className="grid grid-cols-1 items-start gap-9 lg:grid-cols-[1fr_1.1fr]">
-          <div>
-            <h2 className="m-0 mb-3.5 font-display text-[34px] font-semibold uppercase leading-[1.06] tracking-[.02em] text-ink">
-              Two services and a Plaid key
-            </h2>
-            <p className="m-0 mb-5 max-w-[52ch] text-[15.5px] leading-[1.6] text-ink">
-              Clone it, add your own Plaid sandbox credentials, and run the backend and frontend
-              side by side on localhost. Sandbox mode needs no real bank and no card; the amber
-              demo banner stays up the whole time you're in it.
-            </p>
-            <p className="m-0 max-w-[52ch] text-[14px] leading-[1.6] text-ink-muted">
-              Going live means swapping the Plaid environment variable for production keys and
-              generating a real <code className="font-mono text-[13px]">ENCRYPTION_KEY</code>.
-              Nothing else in the app changes.
-            </p>
-          </div>
-          <pre className="m-0 overflow-x-auto whitespace-pre px-[26px] py-6 font-mono text-[13px] leading-[1.85]" style={{ background: "#1d1f20", color: "#d6e4f0" }}>
-            {INSTALL}
-          </pre>
-        </div>
-      </section>
-
       <footer className="border-t border-hairline bg-sunken">
         <div className="mx-auto flex max-w-[1200px] flex-col gap-4 px-5 py-8 pb-10 sm:px-[72px]">
           <p className="m-0 max-w-[92ch] text-[13.5px] leading-[1.6] text-ink-muted">
@@ -382,10 +336,10 @@ export function LandingPage({ onTryDemo }) {
               What data is stored, and where it goes &#8964;
             </summary>
             <p className="m-0 mt-3 max-w-[96ch] text-[14px] leading-[1.65] text-ink">
-              Your Plaid access token is encrypted and held by the copy of the server you run.
-              Transactions and budgets are stored in that server's database. There's no analytics
-              service, no tracking pixel, and no third-party script on this page or in the app.
-              The storage code is in{" "}
+              Your Plaid access token is encrypted at rest on the server and never sent back to
+              the browser. Transactions and budgets are stored in that same database, scoped to
+              your account. There's no analytics service, no tracking pixel, and no third-party
+              script on this page or in the app. The storage code is in{" "}
               <span className="bg-[color-mix(in_srgb,var(--ink)_10%,transparent)] px-1.5 py-0.5 font-mono text-[13px]">
                 backend/app/db.py
               </span>{" "}

@@ -17,6 +17,12 @@ def _mock_txn(txn_id, date, name, amount):
     return txn
 
 
+def _mock_removed(txn_id):
+    txn = MagicMock()
+    txn.to_dict.return_value = {"transaction_id": txn_id}
+    return txn
+
+
 def _mock_account(account_id, name, available, current):
     acct = MagicMock()
     acct.to_dict.return_value = {
@@ -55,22 +61,30 @@ class TestFetchTransactions:
         with patch("app.plaid_client._get_client") as get_client:
             get_client.return_value.transactions_sync.return_value = MagicMock(
                 added=[_mock_txn("t1", "2026-07-01", "Starbucks", 4.5)],
+                modified=[],
+                removed=[],
                 next_cursor="cursor-1",
                 has_more=False,
             )
             result = fetch_transactions("access-token")
 
-        assert len(result) == 1
-        assert result[0]["name"] == "Starbucks"
+        assert len(result["added"]) == 1
+        assert result["added"][0]["name"] == "Starbucks"
+        assert result["modified"] == []
+        assert result["removed"] == []
 
     def test_paginates_until_has_more_is_false(self):
         page_1 = MagicMock(
             added=[_mock_txn("t1", "2026-07-01", "Starbucks", 4.5)],
+            modified=[],
+            removed=[],
             next_cursor="cursor-1",
             has_more=True,
         )
         page_2 = MagicMock(
             added=[_mock_txn("t2", "2026-07-02", "Uber", 12.0)],
+            modified=[],
+            removed=[],
             next_cursor="cursor-2",
             has_more=False,
         )
@@ -78,7 +92,7 @@ class TestFetchTransactions:
             get_client.return_value.transactions_sync.side_effect = [page_1, page_2]
             result = fetch_transactions("access-token")
 
-        assert [t["name"] for t in result] == ["Starbucks", "Uber"]
+        assert [t["name"] for t in result["added"]] == ["Starbucks", "Uber"]
         assert get_client.return_value.transactions_sync.call_count == 2
 
     def test_first_request_omits_cursor_field(self):
@@ -86,14 +100,14 @@ class TestFetchTransactions:
         so the first sync call must omit the field rather than pass None."""
         with patch("app.plaid_client._get_client") as get_client:
             get_client.return_value.transactions_sync.return_value = MagicMock(
-                added=[], next_cursor="cursor-1", has_more=False
+                added=[], modified=[], removed=[], next_cursor="cursor-1", has_more=False
             )
             fetch_transactions("access-token")
 
         sent_request = get_client.return_value.transactions_sync.call_args[0][0]
         assert "cursor" not in sent_request.to_dict()
 
-    def test_filters_by_date_range(self):
+    def test_filters_added_and_modified_by_date_range(self):
         with patch("app.plaid_client._get_client") as get_client:
             get_client.return_value.transactions_sync.return_value = MagicMock(
                 added=[
@@ -101,12 +115,29 @@ class TestFetchTransactions:
                     _mock_txn("t2", "2026-07-15", "InRange", 20.0),
                     _mock_txn("t3", "2026-08-01", "TooNew", 30.0),
                 ],
+                modified=[_mock_txn("t4", "2026-07-20", "AlsoInRange", 15.0)],
+                removed=[],
                 next_cursor="cursor-1",
                 has_more=False,
             )
             result = fetch_transactions("access-token", start_date="2026-07-01", end_date="2026-07-31")
 
-        assert [t["name"] for t in result] == ["InRange"]
+        assert [t["name"] for t in result["added"]] == ["InRange"]
+        assert [t["name"] for t in result["modified"]] == ["AlsoInRange"]
+
+    def test_collects_modified_and_removed(self):
+        with patch("app.plaid_client._get_client") as get_client:
+            get_client.return_value.transactions_sync.return_value = MagicMock(
+                added=[],
+                modified=[_mock_txn("t1", "2026-07-01", "Pending settled", 22.0)],
+                removed=[_mock_removed("t2")],
+                next_cursor="cursor-1",
+                has_more=False,
+            )
+            result = fetch_transactions("access-token")
+
+        assert [t["name"] for t in result["modified"]] == ["Pending settled"]
+        assert result["removed"] == ["t2"]
 
 
 class TestFetchBalances:

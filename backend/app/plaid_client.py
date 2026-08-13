@@ -62,11 +62,17 @@ def remove_item(access_token: str) -> None:
     _get_client().item_remove(ItemRemoveRequest(access_token=access_token))
 
 
-def fetch_transactions(access_token: str, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
-    """Pulls all transactions via the cursor-paginated sync endpoint. sync itself has
-    no date-range parameter (it returns everything new since the cursor), so
-    start_date/end_date filter the result client-side."""
-    transactions = []
+def fetch_transactions(access_token: str, start_date: str | None = None, end_date: str | None = None) -> dict:
+    """Pulls all transaction changes via the cursor-paginated sync endpoint. sync itself
+    has no date-range parameter (it returns everything new since the cursor), so
+    start_date/end_date filter added/modified client-side.
+
+    Returns {"added": [...], "modified": [...], "removed": [...ids]} rather than a flat
+    list - Plaid reports pending-to-posted updates (amount/date/merchant changing on an
+    already-synced transaction) as "modified", not "added" again, and reversed/cancelled
+    transactions as "removed". A flat added-only list silently drops both of those on a
+    real account, which rarely matters in Sandbox but does on live data."""
+    added, modified, removed = [], [], []
     cursor = None
     has_more = True
     while has_more:
@@ -74,18 +80,22 @@ def fetch_transactions(access_token: str, start_date: str | None = None, end_dat
         if cursor is not None:
             kwargs["cursor"] = cursor
         response = _get_client().transactions_sync(TransactionsSyncRequest(**kwargs))
-        transactions.extend(t.to_dict() for t in response.added)
+        added.extend(t.to_dict() for t in response.added)
+        modified.extend(t.to_dict() for t in response.modified)
+        removed.extend(t.to_dict()["transaction_id"] for t in response.removed)
         cursor = response.next_cursor
         has_more = response.has_more
 
     if start_date or end_date:
-        transactions = [
-            t
-            for t in transactions
-            if (start_date is None or str(t["date"]) >= start_date)
-            and (end_date is None or str(t["date"]) <= end_date)
-        ]
-    return transactions
+        def _in_range(t):
+            return (start_date is None or str(t["date"]) >= start_date) and (
+                end_date is None or str(t["date"]) <= end_date
+            )
+
+        added = [t for t in added if _in_range(t)]
+        modified = [t for t in modified if _in_range(t)]
+
+    return {"added": added, "modified": modified, "removed": removed}
 
 
 def fetch_balances(access_token: str) -> dict:

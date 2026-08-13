@@ -1,0 +1,59 @@
+services:
+  # FastAPI backend. Reads/writes SQLite on a persistent Disk so linked-bank
+  # data survives redeploys - Render's own filesystem is wiped on every deploy
+  # otherwise. Chroma's local vector store is left on ephemeral storage on
+  # purpose: app.retrieval self-seeds it from static JSON + a live fetch the
+  # first time it's queried after a cold start (see retrieve_context), so
+  # losing it costs one slightly slower request, not data.
+  - type: web
+    name: expense-tracker-backend
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: expense-tracker-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////var/data/expense_tracker.db
+      - key: PLAID_CLIENT_ID
+        sync: false
+      - key: PLAID_SECRET
+        sync: false
+      - key: PLAID_ENV
+        value: sandbox
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://expense-tracker-frontend.onrender.com
+
+  # Static Vite build. VITE_API_BASE_URL is baked in at build time, so it has
+  # to be set here (not just in the backend's env) before the build runs.
+  - type: web
+    name: expense-tracker-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://expense-tracker-backend.onrender.com
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

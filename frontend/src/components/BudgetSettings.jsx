@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Corners } from "./Corners";
 
@@ -36,7 +36,15 @@ function averageMonthlySpend(transactions) {
   return averages;
 }
 
-export function BudgetSettings({ status, transactions, onSaved, onDisconnect, isSandbox }) {
+export function BudgetSettings({ status, transactions, onSaved, onDisconnect, isSandbox, location, onLocationChange }) {
+  const [locationDraft, setLocationDraft] = useState(location ?? "");
+
+  // location loads asynchronously from localStorage in App.jsx (keyed by
+  // uid) - sync the draft once it arrives rather than only reading it at
+  // this component's first mount, which could otherwise race and show blank.
+  useEffect(() => {
+    setLocationDraft(location ?? "");
+  }, [location]);
   const [drafts, setDrafts] = useState({});
   const [saving, setSaving] = useState(false);
   const [recommendState, setRecommendState] = useState("idle"); // idle | loading | error
@@ -77,28 +85,28 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
     });
   };
 
+  const applyRecommendations = (result) => {
+    setDrafts((d) => {
+      const next = { ...d };
+      for (const r of result.recommendations) {
+        next[r.category] = String(Math.round(r.recommended_budget));
+      }
+      return next;
+    });
+  };
+
   const getAiRecommendations = async () => {
     setRecommendState("loading");
     setRecommendError(null);
     try {
       const result = await api.recommendBudgets(6);
       setRecommendation(result);
+      applyRecommendations(result);
       setRecommendState("idle");
     } catch (err) {
       setRecommendState("error");
       setRecommendError(err.status === 429 ? err.message : "Couldn't get recommendations. Try again.");
     }
-  };
-
-  const applyRecommendations = () => {
-    if (!recommendation) return;
-    setDrafts((d) => {
-      const next = { ...d };
-      for (const r of recommendation.recommendations) {
-        next[r.category] = String(Math.round(r.recommended_budget));
-      }
-      return next;
-    });
   };
 
   const totalBudgeted = CATEGORIES.reduce((sum, category) => {
@@ -125,6 +133,27 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
   return (
     <div className="blueprint relative border border-hairline bg-ground">
       <Corners />
+      {onLocationChange && (
+        <div className="border-b border-rule px-[26px] py-[22px]">
+          <h3 className="mb-1 font-display text-[16px] font-semibold uppercase tracking-[.07em] text-ink">
+            Your location
+          </h3>
+          <p className="mb-3 text-[13.5px] text-ink-muted">
+            Optional - city and state. Used to pull local rent and property-tax context into
+            Auto-budget's Housing suggestions on the Dashboard.
+          </p>
+          <div className="flex max-w-[420px] items-center gap-2.5">
+            <input
+              type="text"
+              value={locationDraft}
+              onChange={(e) => setLocationDraft(e.target.value)}
+              onBlur={() => onLocationChange(locationDraft.trim())}
+              placeholder="e.g. Austin, TX"
+              className="h-[42px] w-full border border-field bg-surface px-3.5 text-[14px] text-ink outline-none focus:border-accent"
+            />
+          </div>
+        </div>
+      )}
       <div className="px-[26px] py-[26px] pb-7">
         <h3 className="mb-1 font-display text-[16px] font-semibold uppercase tracking-[.07em] text-ink">
           Monthly budget by category
@@ -170,10 +199,10 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
               {recommendation.recommendations.length > 0 && (
                 <button
                   type="button"
-                  onClick={applyRecommendations}
+                  onClick={() => applyRecommendations(recommendation)}
                   className="whitespace-nowrap font-display text-[11.5px] font-semibold uppercase tracking-[.05em] text-accent-deep hover:text-accent-press"
                 >
-                  Apply all &rarr;
+                  Re-apply &rarr;
                 </button>
               )}
             </div>
@@ -200,15 +229,15 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
         )}
 
         <div className="flex flex-col">
-          <div className="grid grid-cols-[1fr_124px_92px] gap-3.5 border-b border-hairline pb-[9px] font-mono text-[10px] font-medium uppercase tracking-[.1em] text-ink-faint">
+          <div className="grid grid-cols-[1fr_104px] gap-2.5 border-b border-hairline pb-[9px] font-mono text-[10px] font-medium uppercase tracking-[.1em] text-ink-faint sm:grid-cols-[1fr_124px_92px] sm:gap-3.5">
             <span>Category</span>
             <span className="text-right">Monthly budget</span>
-            <span className="text-right">Avg. spend</span>
+            <span className="hidden text-right sm:block">Avg. spend</span>
           </div>
           {CATEGORIES.map((category) => (
             <div
               key={category}
-              className="grid grid-cols-[1fr_124px_92px] items-center gap-3.5 border-b border-rule py-[11px]"
+              className="grid grid-cols-[1fr_104px] items-center gap-2.5 border-b border-rule py-[11px] sm:grid-cols-[1fr_124px_92px] sm:gap-3.5"
             >
               <span className="flex items-center gap-2.5 text-[14px] text-ink">
                 <span className="h-2.5 w-2.5 flex-none" style={{ background: CATEGORY_VAR[category] }} />
@@ -225,7 +254,7 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
                   className="num w-full border-0 bg-transparent text-right text-[14px] text-ink outline-none"
                 />
               </span>
-              <span className="num text-right text-[13px] text-ink-faint">
+              <span className="num hidden text-right text-[13px] text-ink-faint sm:block">
                 {currency(Math.round(averages[category] ?? 0))}
               </span>
             </div>

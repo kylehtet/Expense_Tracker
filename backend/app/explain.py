@@ -36,7 +36,8 @@ _client: anthropic.Anthropic | None = None
 def _get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()
+        # See app.recommend._get_client - same reasoning for a short timeout.
+        _client = anthropic.Anthropic(timeout=20.0)
     return _client
 
 

@@ -10,12 +10,12 @@ import { Dashboard } from "./components/Dashboard";
 import { BudgetSettings } from "./components/BudgetSettings";
 import { Logo } from "./components/Logo";
 import { LandingPage } from "./components/LandingPage";
-import { AffordabilityChecker } from "./components/AffordabilityChecker";
 
 const SYNCED_AT_KEY_PREFIX = "expense_tracker_synced_at_";
+const LOCATION_KEY_PREFIX = "expense_tracker_location_";
 const SYNC_COOLDOWN_MS = 60_000; // mirrors backend SYNC_COOLDOWN_SECONDS in main.py
 
-const TABS = ["Dashboard", "Affordability", "Settings"];
+const TABS = ["Dashboard", "Settings"];
 
 function timeAgo(date) {
   if (!date) return null;
@@ -43,7 +43,16 @@ function App() {
   const [syncError, setSyncError] = useState(null);
   const [syncedAt, setSyncedAt] = useState(null);
   const [syncBlockedUntil, setSyncBlockedUntil] = useState(0);
+  const [location, setLocationState] = useState("");
   const [, forceTick] = useState(0);
+
+  // Kept in localStorage only, per-device, per-user (this app has no stored
+  // user profile) - just feeds retrieve_housing_context's local property-tax/
+  // cost-of-living facts into the Auto-budget Housing rationale when set.
+  const setLocation = (value) => {
+    setLocationState(value);
+    localStorage.setItem(LOCATION_KEY_PREFIX + userId, value);
+  };
 
   // has_linked_bank comes from the backend (is there a Plaid Item for this
   // real, authenticated uid?), not a per-browser guess, so it survives
@@ -57,6 +66,7 @@ function App() {
     if (!userId) return;
     const stored = localStorage.getItem(SYNCED_AT_KEY_PREFIX + userId);
     if (stored) setSyncedAt(new Date(stored));
+    setLocationState(localStorage.getItem(LOCATION_KEY_PREFIX + userId) || "");
   }, [userId]);
 
   // Live-updating countdown while the sync button is cooling down, so
@@ -215,13 +225,17 @@ function App() {
         <p className="bg-crit-bg px-[30px] py-2 text-[13px] text-crit">{syncError}</p>
       )}
 
-      <main className="mx-auto flex w-full max-w-[1240px] flex-1 flex-col gap-8 px-6 py-8">
+      <main className="mx-auto flex w-full max-w-[1760px] flex-1 flex-col gap-8 px-8 py-8">
         {!linked ? (
           <ConnectBankButton onLinked={handleLinked} isSandbox={config?.is_sandbox} />
         ) : tab === "Dashboard" ? (
-          <Dashboard status={status} transactions={transactions} goals={goals} />
-        ) : tab === "Affordability" ? (
-          <AffordabilityChecker status={status} isSandbox={config?.is_sandbox} goals={goals} onGoalsChanged={refreshGoals} />
+          <Dashboard
+            status={status}
+            transactions={transactions}
+            goals={goals}
+            onGoalsChanged={refreshGoals}
+            location={location}
+          />
         ) : (
           <BudgetSettings
             status={status}
@@ -229,6 +243,8 @@ function App() {
             onSaved={() => setRefreshKey((k) => k + 1)}
             onDisconnect={handleDisconnect}
             isSandbox={config?.is_sandbox}
+            location={location}
+            onLocationChange={setLocation}
           />
         )}
       </main>

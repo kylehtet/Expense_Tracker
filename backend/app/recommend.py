@@ -41,7 +41,10 @@ _client: anthropic.Anthropic | None = None
 def _get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()
+        # The SDK's default timeout is minutes long - too slow to sit behind a
+        # "fill in the boxes" click. Short-circuit to the deterministic
+        # fallback below well before the user notices, on any network hiccup.
+        _client = anthropic.Anthropic(timeout=20.0)
     return _client
 
 

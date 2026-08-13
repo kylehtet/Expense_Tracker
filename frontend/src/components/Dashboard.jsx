@@ -2,6 +2,8 @@ import { useState } from "react";
 import { CategorySpendingChart } from "./CategorySpendingChart";
 import { BudgetProgressList } from "./BudgetProgressBar";
 import { TransactionsList } from "./TransactionsList";
+import { GoalsSection } from "./GoalsSection";
+import { RecurringCharges } from "./RecurringCharges";
 import { Corners } from "./Corners";
 
 const currency = (value) =>
@@ -22,11 +24,10 @@ function GoalWarningBanner({ goals }) {
   const names = offTrack.map((g) => g.name).join(", ");
 
   return (
-    <div className="flex items-start justify-between gap-4 border border-crit-br bg-crit-bg px-[22px] py-3.5">
-      <p className="m-0 text-[13.5px] leading-[1.5] text-crit">
+    <div className="flex items-start justify-between gap-4 rounded-xl border-2 border-crit-br bg-crit-bg px-5 py-3">
+      <p className="m-0 text-[13px] leading-[1.5] text-crit">
         <strong className="font-semibold">Behind pace: </strong>
-        {names} {offTrack.length === 1 ? "isn't" : "aren't"} on track to hit their target — check Affordability &rsaquo;
-        Your goals for details.
+        {names} {offTrack.length === 1 ? "isn't" : "aren't"} on track — see Your goals below, or try Auto-budget.
       </p>
       <button
         type="button"
@@ -39,7 +40,7 @@ function GoalWarningBanner({ goals }) {
   );
 }
 
-export function Dashboard({ status, transactions, goals = [] }) {
+export function Dashboard({ status, transactions, goals = [], onGoalsChanged, location }) {
   const entries = Object.values(status);
   const totalSpent = entries.reduce((sum, e) => sum + Math.max(e.actual, 0), 0);
   const budgeted = entries.filter((e) => e.budget != null);
@@ -56,7 +57,7 @@ export function Dashboard({ status, transactions, goals = [] }) {
   ];
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       <GoalWarningBanner goals={goals} />
 
       <div className="blueprint relative border border-hairline bg-ground">
@@ -67,7 +68,7 @@ export function Dashboard({ status, transactions, goals = [] }) {
             <div className="mb-2.5 font-mono text-[10px] font-medium uppercase tracking-[.14em] text-ink-faint">
               {monthLabel()} &middot; to date
             </div>
-            <div className="flex items-baseline gap-3.5">
+            <div className="flex flex-wrap items-baseline gap-3.5">
               <span className="font-display text-[46px] font-semibold tracking-[-.01em] text-ink num">
                 {currency(totalSpent)}
               </span>
@@ -76,13 +77,13 @@ export function Dashboard({ status, transactions, goals = [] }) {
               )}
             </div>
           </div>
-          <div className="flex gap-px border border-hairline bg-hairline">
+          <div className="grid grid-cols-3 gap-px border border-hairline bg-hairline sm:flex">
             {stats.map((s) => (
-              <div key={s.label} className="min-w-[132px] bg-ground px-[22px] py-[13px]">
-                <div className="mb-2 font-mono text-[10px] font-medium uppercase tracking-[.1em] text-ink-faint">
+              <div key={s.label} className="bg-ground px-[14px] py-[13px] sm:min-w-[132px] sm:px-[22px]">
+                <div className="mb-2 font-mono text-[9px] font-medium uppercase tracking-[.1em] text-ink-faint sm:text-[10px]">
                   {s.label}
                 </div>
-                <div className="num font-display text-[23px] font-semibold" style={{ color: s.color }}>
+                <div className="num font-display text-[18px] font-semibold sm:text-[23px]" style={{ color: s.color }}>
                   {s.value}
                 </div>
               </div>
@@ -90,35 +91,38 @@ export function Dashboard({ status, transactions, goals = [] }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-px bg-rule lg:grid-cols-[1.18fr_1fr]">
-          <div className="flex flex-col bg-ground">
-            <section className="border-b border-rule px-[30px] py-[26px]">
-              <div className="mb-5 flex items-baseline justify-between gap-3">
-                <h3 className="font-display text-[16px] font-semibold uppercase tracking-[.07em] text-ink">
-                  Spending by category
-                </h3>
-                <span className="font-mono text-[12.5px] text-ink-faint">ranked</span>
-              </div>
+        <div className="grid grid-cols-1 gap-px bg-rule lg:grid-cols-[1.15fr_1fr]">
+          <div className="flex flex-col gap-7 bg-ground px-[30px] py-[26px]">
+            <section>
+              <h3 className="mb-4 font-display text-[16px] font-bold uppercase tracking-[.05em] text-ink">
+                Spending by category
+              </h3>
               <CategorySpendingChart status={status} />
             </section>
 
-            <section className="px-[30px] py-[26px]">
-              <h3 className="mb-4 font-display text-[16px] font-semibold uppercase tracking-[.07em] text-ink">
+            <section>
+              <h3 className="mb-4 font-display text-[16px] font-bold uppercase tracking-[.05em] text-ink">
                 Budget progress
               </h3>
               <BudgetProgressList status={status} />
             </section>
           </div>
 
-          <div className="flex flex-col bg-ground">
-            <div className="flex items-center justify-between gap-3 px-[30px] pb-4 pt-[26px]">
-              <h3 className="font-display text-[16px] font-semibold uppercase tracking-[.07em] text-ink">
+          <div className="flex flex-col gap-7 bg-ground px-[30px] py-[26px]">
+            <RecurringCharges goals={goals} />
+
+            <section>
+              <h3 className="mb-3 font-display text-[16px] font-bold uppercase tracking-[.05em] text-ink">
                 Recent transactions
               </h3>
-            </div>
-            <TransactionsList transactions={transactions.slice(0, 10)} />
+              <TransactionsList transactions={transactions.slice(0, 8)} />
+            </section>
           </div>
         </div>
+
+        <section className="border-t border-rule bg-ground px-[30px] py-[26px]">
+          <GoalsSection goals={goals} onChanged={onGoalsChanged} location={location} />
+        </section>
       </div>
     </div>
   );

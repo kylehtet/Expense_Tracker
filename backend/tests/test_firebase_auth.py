@@ -3,7 +3,8 @@ from unittest.mock import patch
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.firebase_auth import require_firebase_auth
+import app.firebase_auth as firebase_auth_module
+from app.firebase_auth import _get_firebase_app, require_firebase_auth
 
 app = FastAPI()
 
@@ -40,3 +41,28 @@ class TestRequireFirebaseAuth:
             response = client.get("/protected", headers={"Authorization": "Bearer valid-token"})
         assert response.status_code == 200
         assert response.json() == {"uid": "abc123"}
+
+
+class TestGetFirebaseApp:
+    def setup_method(self):
+        firebase_auth_module._firebase_app = None
+
+    def teardown_method(self):
+        firebase_auth_module._firebase_app = None
+
+    def test_prefers_json_env_var_over_path_when_both_set(self):
+        service_account = {"type": "service_account", "project_id": "demo"}
+        with patch("app.firebase_auth.FIREBASE_SERVICE_ACCOUNT_JSON", '{"type": "service_account", "project_id": "demo"}'), \
+             patch("app.firebase_auth.FIREBASE_SERVICE_ACCOUNT_PATH", "./should-not-be-used.json"), \
+             patch("app.firebase_auth.credentials.Certificate") as certificate, \
+             patch("app.firebase_auth.firebase_admin.initialize_app"):
+            _get_firebase_app()
+        certificate.assert_called_once_with(service_account)
+
+    def test_falls_back_to_path_when_json_env_var_unset(self):
+        with patch("app.firebase_auth.FIREBASE_SERVICE_ACCOUNT_JSON", None), \
+             patch("app.firebase_auth.FIREBASE_SERVICE_ACCOUNT_PATH", "./firebase-service-account.json"), \
+             patch("app.firebase_auth.credentials.Certificate") as certificate, \
+             patch("app.firebase_auth.firebase_admin.initialize_app"):
+            _get_firebase_app()
+        certificate.assert_called_once_with("./firebase-service-account.json")
