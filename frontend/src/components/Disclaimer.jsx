@@ -14,7 +14,11 @@ export function Footer() {
           browser or logged. Transactions and the budgets you set are stored in this app's own
           database so your dashboard works between visits. Nothing here is sold, shared, or sent
           to any third party beyond Plaid (to read your transactions) and Anthropic (to write
-          plain-language explanations and budget suggestions from your real numbers).
+          plain-language explanations and budget suggestions from your real numbers). Full{" "}
+          <a href="/privacy" className="font-semibold text-accent-deep hover:text-accent-press">
+            Privacy Policy
+          </a>
+          .
         </p>
       </details>
     </div>

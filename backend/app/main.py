@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy.orm import Session as DbSession
 
 from app.affordability import check_purchase
@@ -19,6 +19,7 @@ from app.db import (
     GoalRecord,
     TransactionRecord,
     abandon_goal,
+    add_interest_signup,
     count_production_links,
     create_goal,
     delete_item,
@@ -80,6 +81,13 @@ _last_auto_budget_at: dict[str, datetime] = {}
 # app.db.ProductionLinkEvent for why this is a lifetime count, not a
 # currently-connected count.
 PRODUCTION_CONNECTION_LIMIT = 10
+
+# Unauthenticated (no Firebase login) - keyed by request IP rather than uid,
+# since there's no account to key on yet. Generous cooldown, just enough to
+# blunt a scripted spam loop; the email-format check and unique-email dedupe
+# in app.db do most of the real work.
+INTEREST_SIGNUP_COOLDOWN_SECONDS = 30
+_last_interest_signup_at: dict[str, datetime] = {}
 
 
 @asynccontextmanager
@@ -398,6 +406,29 @@ def get_config(db: DbSession = Depends(get_db)) -> ConfigOut:
         is_sandbox=IS_SANDBOX,
         production_connections_used=count_production_links(db),
     )
+
+
+class InterestSignupRequest(BaseModel):
+    email: EmailStr
+
+
+class InterestSignupResponse(BaseModel):
+    status: str
+
+
+@app.post("/interest", response_model=InterestSignupResponse)
+def submit_interest(
+    payload: InterestSignupRequest, request: Request, db: DbSession = Depends(get_db)
+) -> InterestSignupResponse:
+    client_ip = request.client.host if request.client else "unknown"
+    now = datetime.now(timezone.utc)
+    last = _last_interest_signup_at.get(client_ip)
+    if last is not None and (now - last).total_seconds() < INTEREST_SIGNUP_COOLDOWN_SECONDS:
+        raise HTTPException(status_code=429, detail="Too many requests - try again shortly")
+    _last_interest_signup_at[client_ip] = now
+
+    add_interest_signup(db, payload.email.lower())
+    return InterestSignupResponse(status="ok")
 
 
 @app.get("/auth/me", response_model=MeResponse)

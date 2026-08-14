@@ -1,4 +1,5 @@
 import { Corners } from "./Corners";
+import { InterestForm } from "./InterestForm";
 
 const GITHUB_URL = "https://github.com/kylehtet/can_u_afford_it";
 
@@ -60,6 +61,37 @@ const STEPS = [
     tag: "Working",
   },
 ];
+
+// Illustrative example of the affordability check - a real check does the same
+// deterministic budget-headroom math against your actual synced spending; an
+// LLM only ever writes the one-sentence explanation on top of that math, never
+// the verdict itself. Numbers here are made up for the example.
+const AFFORDABILITY_EXAMPLE = {
+  item: "Concert tickets",
+  price: 180,
+  category: "Entertainment",
+  headline: "Yes — you can afford this.",
+  explanation:
+    "Entertainment has $312 left this month, and this wouldn't push Food or Housing over pace either.",
+  facts: [
+    { label: "Entertainment left this month", value: "$312.00" },
+    { label: "This purchase", value: "$180.00" },
+    { label: "Days left in month", value: "17" },
+  ],
+};
+
+// Same real feature, same made-up-for-illustration numbers as the rest of
+// this preview - goal pace is computed the same deterministic way as the
+// budget math above, an LLM never decides whether a goal is on track.
+const GOALS_EXAMPLE = [
+  { name: "Flight to Tokyo", saved: 890, target: 1800, status: "on_track" },
+  { name: "New laptop", saved: 240, target: 1200, status: "behind" },
+];
+
+const GOAL_STATUS_TOKEN = {
+  on_track: { fg: "var(--good)", bg: "var(--good-bg)", label: "On track" },
+  behind: { fg: "var(--crit)", bg: "var(--crit-bg)", label: "Behind pace" },
+};
 
 const PRIVACY = [
   {
@@ -167,6 +199,87 @@ function DashboardPreview() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      </div>
+      <div className="border-t border-hairline bg-ground px-7 py-[26px] pb-[30px]">
+        <div className="mb-3.5 font-display text-[15px] font-semibold uppercase tracking-[.07em] text-ink">
+          Your goals
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {GOALS_EXAMPLE.map((g) => {
+            const token = GOAL_STATUS_TOKEN[g.status];
+            const pct = Math.min(g.saved / g.target, 1);
+            return (
+              <div key={g.name} className="border border-hairline px-5 py-4">
+                <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                  <span className="font-display text-[14.5px] font-semibold text-ink">{g.name}</span>
+                  <span
+                    className="flex-none font-display text-[10px] font-bold uppercase tracking-[.05em]"
+                    style={{ color: token.fg, background: token.bg, padding: "3px 8px" }}
+                  >
+                    {token.label}
+                  </span>
+                </div>
+                <span className="num text-[13px] text-ink-muted">
+                  ${g.saved.toLocaleString()} / ${g.target.toLocaleString()}
+                </span>
+                <span className="relative mt-2 block h-2 bg-track">
+                  <span className="absolute inset-y-0 left-0" style={{ width: `${pct * 100}%`, background: token.fg }} />
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AffordabilityExample() {
+  const ex = AFFORDABILITY_EXAMPLE;
+  return (
+    <div className="blueprint relative border border-hairline bg-ground">
+      <Corners />
+      <div className="grid grid-cols-1 gap-px bg-rule md:grid-cols-[1fr_1.2fr]">
+        <div className="bg-ground px-7 py-[26px] pb-[30px]">
+          <div className="mb-4 font-mono text-[10px] font-medium uppercase tracking-[.14em] text-ink-faint">
+            Can I afford this?
+          </div>
+          <div className="flex flex-col gap-3.5">
+            <div>
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink-faint">Item</div>
+              <div className="border border-field bg-surface px-3.5 py-2.5 text-[14px] text-ink">{ex.item}</div>
+            </div>
+            <div className="flex gap-3.5">
+              <div className="flex-1">
+                <div className="mb-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink-faint">Price</div>
+                <div className="num border border-field bg-surface px-3.5 py-2.5 text-[14px] text-ink">
+                  ${ex.price.toLocaleString()}
+                </div>
+              </div>
+              <div className="flex-1">
+                <div className="mb-1 font-mono text-[10px] uppercase tracking-[.1em] text-ink-faint">Category</div>
+                <div className="border border-field bg-surface px-3.5 py-2.5 text-[14px] text-ink">{ex.category}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-ground px-7 py-[26px] pb-[30px]">
+          <div
+            className="mb-4 inline-block border font-display text-[13px] font-bold uppercase tracking-[.05em]"
+            style={{ color: "var(--good)", background: "var(--good-bg)", borderColor: "var(--good-br)", padding: "8px 14px" }}
+          >
+            {ex.headline}
+          </div>
+          <p className="m-0 mb-5 text-[14.5px] leading-[1.6] text-ink">{ex.explanation}</p>
+          <div className="flex flex-col">
+            {ex.facts.map((f) => (
+              <div key={f.label} className="flex items-baseline justify-between gap-3 border-t border-rule py-2.5 text-[13px]">
+                <span className="text-ink-muted">{f.label}</span>
+                <span className="num font-medium text-ink">{f.value}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -291,6 +404,17 @@ export function LandingPage({ onTryDemo }) {
         <DashboardPreview />
       </section>
 
+      <section className="mx-auto max-w-[1200px] px-5 pb-24 sm:px-[72px]">
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-4">
+          <span className="font-display text-[13px] font-semibold uppercase tracking-[.08em] text-accent-deep">
+            The affordability check
+          </span>
+          <span className="font-mono text-[12.5px] text-ink-faint">example &middot; deterministic math</span>
+        </div>
+        <hr className="mb-6 h-px border-0 bg-hairline" />
+        <AffordabilityExample />
+      </section>
+
       <section id="how" className="mx-auto max-w-[1200px] scroll-mt-[76px] px-5 pb-24 sm:px-[72px]">
         <span className="mb-3 block font-display text-[13px] font-semibold uppercase tracking-[.08em] text-accent-deep">
           Sheet 01 &middot; How it works
@@ -322,6 +446,10 @@ export function LandingPage({ onTryDemo }) {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="mx-auto max-w-[1200px] px-5 pb-24 sm:px-[72px]">
+        <InterestForm />
       </section>
 
       <footer className="border-t border-hairline bg-sunken">

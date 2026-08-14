@@ -14,6 +14,7 @@ from app.main import (
     SYNC_COOLDOWN_SECONDS,
     _last_affordability_check_at,
     _last_auto_budget_at,
+    _last_interest_signup_at,
     _last_recommend_at,
     _last_sync_at,
     app,
@@ -56,6 +57,7 @@ def _fresh_db_and_rate_limits():
     _last_affordability_check_at.clear()
     _last_recommend_at.clear()
     _last_auto_budget_at.clear()
+    _last_interest_signup_at.clear()
     _authenticate_as(DEFAULT_USER_ID)
     yield
     app.dependency_overrides.pop(require_firebase_auth, None)
@@ -101,6 +103,34 @@ class TestConfig:
         finally:
             _authenticate_as(DEFAULT_USER_ID)
         assert response.status_code == 200
+
+
+class TestInterestSignup:
+    def test_does_not_require_authentication(self, client):
+        app.dependency_overrides.pop(require_firebase_auth, None)
+        try:
+            response = client.post("/interest", json={"email": "interested@example.com"})
+        finally:
+            _authenticate_as(DEFAULT_USER_ID)
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+    def test_rejects_malformed_email(self, client):
+        response = client.post("/interest", json={"email": "not-an-email"})
+        assert response.status_code == 422
+
+    def test_resubmitting_the_same_email_is_still_ok(self, client):
+        first = client.post("/interest", json={"email": "twice@example.com"})
+        _last_interest_signup_at.clear()  # bypass the per-IP cooldown, not what this test covers
+        second = client.post("/interest", json={"email": "twice@example.com"})
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+    def test_second_request_within_cooldown_is_rate_limited(self, client):
+        first = client.post("/interest", json={"email": "a@example.com"})
+        second = client.post("/interest", json={"email": "b@example.com"})
+        assert first.status_code == 200
+        assert second.status_code == 429
 
 
 class TestMe:

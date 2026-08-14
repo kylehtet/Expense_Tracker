@@ -22,7 +22,22 @@ if _database_url.startswith("postgres://"):
     _database_url = _database_url.replace("postgres://", "postgresql://", 1)
 
 _connect_args = {"check_same_thread": False} if _database_url.startswith("sqlite") else {}
-engine = create_engine(_database_url, connect_args=_connect_args)
+engine = create_engine(
+    _database_url,
+    connect_args=_connect_args,
+    # Neon (and most serverless/autosuspending Postgres) can drop an idle
+    # connection server-side - e.g. suspending the compute after inactivity -
+    # without the pool knowing. Without pool_pre_ping, the next request to
+    # reuse that pooled connection fails with "SSL connection has been closed
+    # unexpectedly" instead of transparently getting a fresh one. pre_ping
+    # issues a cheap liveness check before handing out a pooled connection and
+    # silently replaces it if it's dead; pool_recycle proactively retires
+    # connections older than 5 minutes so they're not even given the chance
+    # to go stale. No-op for the local SQLite fallback (single file, no
+    # server-side connection to drop).
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
@@ -102,6 +117,19 @@ class BudgetRecord(Base):
     user_id: Mapped[str] = mapped_column(String, index=True)
     category: Mapped[str] = mapped_column(String)
     amount: Mapped[float] = mapped_column(Float)
+
+
+class InterestSignup(Base):
+    """An email left on the landing page's 'get notified' form - not a user
+    account, no auth, nothing else attached. Kept separate from Firebase
+    entirely since expressing interest shouldn't require creating a real
+    account before the app is ready for real users beyond the developer."""
+
+    __tablename__ = "interest_signups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
 
 def init_db() -> None:
@@ -299,3 +327,15 @@ def update_goal(db: Session, user_id: str, goal_id: int, **fields) -> Optional[G
 
 def abandon_goal(db: Session, user_id: str, goal_id: int) -> Optional[GoalRecord]:
     return update_goal(db, user_id, goal_id, status="abandoned")
+
+
+def add_interest_signup(db: Session, email: str) -> bool:
+    """Records an email for the "get notified" form. Returns False without
+    erroring on a duplicate - resubmitting the same email is a no-op, not a
+    failure the visitor needs to see."""
+    existing = db.scalar(select(InterestSignup).where(InterestSignup.email == email))
+    if existing is not None:
+        return False
+    db.add(InterestSignup(email=email))
+    db.commit()
+    return True

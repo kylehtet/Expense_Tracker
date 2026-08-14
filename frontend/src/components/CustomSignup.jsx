@@ -17,9 +17,15 @@ export function CustomSignup() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [state, setState] = useState("idle"); // idle | loading | error
   const [message, setMessage] = useState(null);
+  const [agreed, setAgreed] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!agreed) {
+      setState("error");
+      setMessage("Please agree to the Privacy Policy to continue.");
+      return;
+    }
     if (password !== confirmPassword) {
       setState("error");
       setMessage("Passwords don't match.");
@@ -104,6 +110,27 @@ export function CustomSignup() {
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
             />
+
+            <label className="flex items-start gap-2.5 text-[13px] leading-[1.5] text-ink-muted">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                className="mt-[3px] h-[15px] w-[15px] flex-none accent-accent-deep"
+              />
+              <span>
+                I agree to the{" "}
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-semibold text-accent-deep hover:text-accent-press"
+                >
+                  Privacy Policy
+                </a>
+                .
+              </span>
+            </label>
 
             {message && <p className="text-[13px] leading-[1.5] text-crit">{message}</p>}
 

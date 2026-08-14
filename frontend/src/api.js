@@ -75,4 +75,6 @@ export const api = {
   getAutoBudget: (goalId, location) => request(`/goals/${goalId}/auto-budget`, { params: { location: location || undefined } }),
 
   getRecurring: () => request("/recurring"),
+
+  submitInterest: (email) => request("/interest", { method: "POST", body: { email } }),
 };
