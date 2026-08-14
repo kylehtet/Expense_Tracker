@@ -4,7 +4,7 @@ import { auth } from "../firebase";
 import { Corners } from "./Corners";
 import { InterestForm } from "./InterestForm";
 
-const GITHUB_URL = "https://github.com/kylehtet/can_u_afford_it";
+const GITHUB_URL = "https://github.com/kylehtet/Expense_Tracker";
 
 // A shared, pre-seeded account anyone can view without connecting a real
 // bank themselves - read-only server-side (see app.main.DEMO_UID), so it's
