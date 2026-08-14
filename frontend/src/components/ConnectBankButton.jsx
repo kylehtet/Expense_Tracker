@@ -5,7 +5,7 @@ import { Corners } from "./Corners";
 
 const POINTS = [
   "Read-only access through Plaid — transactions in, nothing out.",
-  "Sorted into six fixed categories you can budget against.",
+  "Sorted into seven fixed categories you can budget against.",
   "Your access token stays on your own server; budgets stay in your browser.",
   "Your bank login is handled directly by Plaid — this app never sees or stores your bank password.",
 ];
@@ -59,7 +59,7 @@ export function ConnectBankButton({ onLinked, isSandbox }) {
           Connect your bank
         </h1>
         <p className="mb-6 max-w-[46ch] text-[15px] leading-[1.6] text-ink">
-          Expense Tracker reads your transactions through Plaid, sorts them into six categories
+          Expense Tracker reads your transactions through Plaid, sorts them into seven categories
           and tracks them against budgets you set. Read-only — it can't move money.
         </p>
         <div className="mb-[30px] flex flex-col gap-[11px]">

@@ -56,7 +56,8 @@ export const api = {
 
   setBudget: (category, amount) => request("/budget", { method: "POST", body: { category, amount } }),
 
-  recommendBudgets: (months = 6) => request("/budget/recommend", { method: "POST", body: { months } }),
+  recommendBudgets: (months = 6, targetTotal) =>
+    request("/budget/recommend", { method: "POST", body: { months, target_total: targetTotal || undefined } }),
 
   getGoals: (status = "active") => request("/goals", { params: { status } }),
 
@@ -77,4 +78,7 @@ export const api = {
   getRecurring: () => request("/recurring"),
 
   submitInterest: (email) => request("/interest", { method: "POST", body: { email } }),
+
+  updateTransactionCategory: (transactionId, category) =>
+    request(`/transactions/${transactionId}`, { method: "PATCH", body: { category } }),
 };

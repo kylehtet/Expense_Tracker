@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Corners } from "./Corners";
 
-const CATEGORIES = ["Housing", "Food", "Transport", "Subscriptions", "Entertainment", "Other"];
+const CATEGORIES = ["Housing", "Food", "Transport", "Shopping", "Subscriptions", "Entertainment", "Other"];
 
 const CATEGORY_VAR = {
   Housing: "var(--cat-housing)",
@@ -11,6 +11,7 @@ const CATEGORY_VAR = {
   Transport: "var(--cat-transport)",
   Other: "var(--cat-other)",
   Subscriptions: "var(--cat-subs)",
+  Shopping: "var(--cat-shopping)",
 };
 
 const currency = (value) => `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -50,6 +51,7 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
   const [recommendState, setRecommendState] = useState("idle"); // idle | loading | error
   const [recommendError, setRecommendError] = useState(null);
   const [recommendation, setRecommendation] = useState(null);
+  const [targetTotal, setTargetTotal] = useState("");
   const [disconnectState, setDisconnectState] = useState("idle"); // idle | confirming | disconnecting | error
 
   const disconnect = async () => {
@@ -99,7 +101,7 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
     setRecommendState("loading");
     setRecommendError(null);
     try {
-      const result = await api.recommendBudgets(6);
+      const result = await api.recommendBudgets(6, targetTotal ? Number(targetTotal) : undefined);
       setRecommendation(result);
       applyRecommendations(result);
       setRecommendState("idle");
@@ -159,10 +161,10 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
           Monthly budget by category
         </h3>
         <p className="mb-3 text-[13.5px] text-ink-muted">
-          Six fixed categories. Leave a field empty to track spending without a limit.
+          Seven fixed categories. Leave a field empty to track spending without a limit.
         </p>
         {hasHistory && (
-          <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-2.5">
             <button
               type="button"
               onClick={autoFillFromAverages}
@@ -170,6 +172,21 @@ export function BudgetSettings({ status, transactions, onSaved, onDisconnect, is
             >
               Auto-fill from average spend &rarr;
             </button>
+            <span className="flex items-center gap-1.5">
+              <span className="font-mono text-[10px] uppercase tracking-[.08em] text-ink-faint">Target total</span>
+              <span className="flex h-[30px] items-center gap-1 border border-field bg-surface px-2 focus-within:border-accent">
+                <span className="font-mono text-[12px] text-ink-faint">$</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={targetTotal}
+                  onChange={(e) => setTargetTotal(e.target.value)}
+                  placeholder="optional"
+                  className="num w-[84px] border-0 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-faint placeholder:font-sans"
+                />
+              </span>
+            </span>
             <button
               type="button"
               onClick={getAiRecommendations}

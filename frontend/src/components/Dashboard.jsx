@@ -40,7 +40,7 @@ function GoalWarningBanner({ goals }) {
   );
 }
 
-export function Dashboard({ status, transactions, goals = [], onGoalsChanged, location }) {
+export function Dashboard({ status, transactions, goals = [], onGoalsChanged, onTransactionsChanged, location }) {
   const entries = Object.values(status);
   const totalSpent = entries.reduce((sum, e) => sum + Math.max(e.actual, 0), 0);
   const budgeted = entries.filter((e) => e.budget != null);
@@ -115,7 +115,7 @@ export function Dashboard({ status, transactions, goals = [], onGoalsChanged, lo
               <h3 className="mb-3 font-display text-[16px] font-bold uppercase tracking-[.05em] text-ink">
                 Recent transactions
               </h3>
-              <TransactionsList transactions={transactions.slice(0, 8)} />
+              <TransactionsList transactions={transactions.slice(0, 8)} onCategoryChanged={onTransactionsChanged} />
             </section>
           </div>
         </div>

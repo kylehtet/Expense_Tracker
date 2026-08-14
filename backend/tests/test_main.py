@@ -11,6 +11,7 @@ from app.db import Base, get_db
 from app.firebase_auth import require_firebase_auth
 from app.goal_tracker import compute_monthly_savings_capacity
 from app.main import (
+    DEMO_UID,
     SYNC_COOLDOWN_SECONDS,
     _last_affordability_check_at,
     _last_auto_budget_at,
@@ -438,6 +439,64 @@ class TestTransactions:
 
         auth_as("user-2")
         assert client.get("/transactions").json() == []
+
+
+class TestUpdateTransactionCategory:
+    def _sync_one(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-08-12",
+                "name": "ONLINE/MOBILE RECURRING FROM CHK 6698",
+                "amount": 965.37,
+                "personal_finance_category": {"primary": "TRANSFER_OUT"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
+            client.post("/sync")
+
+    def test_updates_the_category(self, client):
+        self._sync_one(client)
+        response = client.patch("/transactions/tx1", json={"category": "Housing"})
+        assert response.status_code == 200
+        assert response.json()["category"] == "Housing"
+
+    def test_rejects_an_invalid_category(self, client):
+        self._sync_one(client)
+        response = client.patch("/transactions/tx1", json={"category": "NotACategory"})
+        assert response.status_code == 400
+
+    def test_404s_for_an_unknown_transaction(self, client):
+        response = client.patch("/transactions/does-not-exist", json={"category": "Housing"})
+        assert response.status_code == 404
+
+    def test_cannot_recategorize_another_users_transaction(self, client, auth_as):
+        auth_as("user-1")
+        self._sync_one(client)
+        auth_as("user-2")
+        response = client.patch("/transactions/tx1", json={"category": "Housing"})
+        assert response.status_code == 404
+
+    def test_override_survives_a_later_sync(self, client):
+        self._sync_one(client)
+        client.patch("/transactions/tx1", json={"category": "Housing"})
+
+        _last_sync_at.clear()
+        raw_again = [
+            {
+                "transaction_id": "tx1",
+                "date": "2026-08-12",
+                "name": "ONLINE/MOBILE RECURRING FROM CHK 6698",
+                "amount": 965.37,
+                "personal_finance_category": {"primary": "TRANSFER_OUT"},
+            }
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": [], "modified": raw_again, "removed": []}):
+            client.post("/sync")
+
+        response = client.get("/transactions")
+        assert response.json()[0]["category"] == "Housing"
 
 
 class TestBudget:
@@ -1092,3 +1151,48 @@ class TestRecurring:
 
         auth_as("user-2")
         assert client.get("/recurring").json() == []
+
+
+class TestDemoAccountIsReadOnly:
+    """The shared demo account (see app.main.DEMO_UID) is meant for anyone to
+    log into from the landing page and poke around real, pre-seeded data -
+    every endpoint that would change that data must reject it, so one
+    visitor's click can't wreck the demo for the next person."""
+
+    def test_cannot_create_link_token(self, client, auth_as):
+        auth_as(DEMO_UID)
+        assert client.post("/link/token").status_code == 403
+
+    def test_cannot_exchange_a_public_token(self, client, auth_as):
+        auth_as(DEMO_UID)
+        response = client.post("/link/exchange", json={"public_token": "public-sandbox-whatever"})
+        assert response.status_code == 403
+
+    def test_cannot_disconnect(self, client, auth_as):
+        auth_as(DEMO_UID)
+        assert client.post("/link/disconnect").status_code == 403
+
+    def test_cannot_sync(self, client, auth_as):
+        auth_as(DEMO_UID)
+        assert client.post("/sync").status_code == 403
+
+    def test_cannot_set_a_budget(self, client, auth_as):
+        auth_as(DEMO_UID)
+        response = client.post("/budget", json={"category": "Food", "amount": 1.0})
+        assert response.status_code == 403
+
+    def test_cannot_create_a_goal(self, client, auth_as):
+        auth_as(DEMO_UID)
+        response = client.post("/goals", json={"name": "x", "target_amount": 100.0, "category": "Food"})
+        assert response.status_code == 403
+
+    def test_cannot_recategorize_a_transaction(self, client, auth_as):
+        auth_as(DEMO_UID)
+        response = client.patch("/transactions/whatever", json={"category": "Food"})
+        assert response.status_code == 403
+
+    def test_reads_still_work(self, client, auth_as):
+        auth_as(DEMO_UID)
+        assert client.get("/transactions").status_code == 200
+        assert client.get("/budget/status").status_code == 200
+        assert client.get("/goals").status_code == 200

@@ -20,7 +20,11 @@ SYSTEM_PROMPT = (
     "numbers - never invent a figure. Propose a round number near the average, "
     "nudged up if spend is rising or volatile, rounded to the nearest $5-$10. "
     "Omit categories with no history. One short, concrete rationale per "
-    "category referencing the actual numbers."
+    "category referencing the actual numbers. If a total monthly target is "
+    "given, the categories should collectively add up to roughly that amount - "
+    "cut discretionary categories (Entertainment, Subscriptions, Shopping, Other, Food) "
+    "before fixed ones (Housing, Transport) if the target requires trimming "
+    "below historical average spend."
 )
 
 
@@ -73,7 +77,7 @@ def spending_profile(transactions: list, months: int = 6) -> dict:
     return profile
 
 
-def _build_user_message(profile: dict, current_budgets: dict) -> str:
+def _build_user_message(profile: dict, current_budgets: dict, target_total: float | None) -> str:
     lines = ["Spending history by category (months with $0 spend excluded):"]
     for category, stats in profile.items():
         current = current_budgets.get(category)
@@ -82,11 +86,33 @@ def _build_user_message(profile: dict, current_budgets: dict) -> str:
             f"- {category}: average ${stats['average']}/mo over {stats['months_observed']} month(s), "
             f"range ${stats['min']}-${stats['max']}, most recent month ${stats['most_recent']}{budget_note}"
         )
+    if target_total is not None:
+        lines.append(f"\nTotal monthly budget target across all categories: ${target_total:.2f}.")
     lines.append("\nRecommend a monthly budget for each category listed above.")
     return "\n".join(lines)
 
 
-def _fallback_recommendations(profile: dict) -> dict:
+_DISCRETIONARY_PRIORITY = ["Entertainment", "Subscriptions", "Shopping", "Other", "Food", "Transport", "Housing"]
+
+
+def _rescale_to_target(recommendations: list[dict], target_total: float) -> list[dict]:
+    """Guarantees the recommendations collectively sum to target_total, scaling
+    every category proportionally to its proposed share rather than trusting
+    the model's own arithmetic - same "model proposes, code guarantees the
+    number" pattern as app.auto_budget._rescale_to_meet_target. Applied to
+    both the AI and fallback paths, so the target is honored either way."""
+    total = sum(r["recommended_budget"] for r in recommendations)
+    if total <= 0 or round(total, 2) == round(target_total, 2):
+        return recommendations
+    scale = target_total / total
+    ordered = sorted(
+        recommendations,
+        key=lambda r: _DISCRETIONARY_PRIORITY.index(r["category"]) if r["category"] in _DISCRETIONARY_PRIORITY else len(_DISCRETIONARY_PRIORITY),
+    )
+    return [{**r, "recommended_budget": round(r["recommended_budget"] * scale, 2)} for r in ordered]
+
+
+def _fallback_recommendations(profile: dict, target_total: float | None) -> dict:
     """Used only if the Anthropic call fails - round the higher of the average
     or most-recent month up to the nearest $10, so an outage never blocks
     getting *some* suggestion."""
@@ -101,13 +127,17 @@ def _fallback_recommendations(profile: dict) -> dict:
                 "rationale": f"About ${stats['average']}/mo on average recently, rounded up for headroom.",
             }
         )
+    if target_total is not None:
+        recommendations = _rescale_to_target(recommendations, target_total)
     return {
         "recommendations": recommendations,
         "summary": "Based on your recent average spend per category, rounded up slightly for headroom.",
     }
 
 
-def recommend_budgets(transactions: list, current_budgets: dict, months: int = 6) -> dict:
+def recommend_budgets(
+    transactions: list, current_budgets: dict, months: int = 6, target_total: float | None = None
+) -> dict:
     profile = spending_profile(transactions, months)
     if not profile:
         return {
@@ -117,7 +147,7 @@ def recommend_budgets(transactions: list, current_budgets: dict, months: int = 6
             "error": None,
         }
 
-    key = llm_cache.cache_key(FEATURE, profile, current_budgets)
+    key = llm_cache.cache_key(FEATURE, profile, current_budgets, target_total)
     cached = llm_cache.get(key)
     if cached is not None:
         log_usage(FEATURE, MODEL, input_tokens=0, output_tokens=0, cached=True)
@@ -128,13 +158,16 @@ def recommend_budgets(transactions: list, current_budgets: dict, months: int = 6
             model=MODEL,
             max_tokens=800,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": _build_user_message(profile, current_budgets)}],
+            messages=[{"role": "user", "content": _build_user_message(profile, current_budgets, target_total)}],
             output_format=BudgetRecommendations,
         )
         parsed = response.parsed_output
         log_usage(FEATURE, MODEL, response.usage.input_tokens, response.usage.output_tokens)
+        recommendations = [r.model_dump() for r in parsed.recommendations if r.recommended_budget > 0]
+        if target_total is not None:
+            recommendations = _rescale_to_target(recommendations, target_total)
         result = {
-            "recommendations": [r.model_dump() for r in parsed.recommendations if r.recommended_budget > 0],
+            "recommendations": recommendations,
             "summary": parsed.summary,
             "source": "ai",
             "error": None,
@@ -142,7 +175,7 @@ def recommend_budgets(transactions: list, current_budgets: dict, months: int = 6
         llm_cache.set(key, result)
         return result
     except Exception as exc:
-        result = _fallback_recommendations(profile)
+        result = _fallback_recommendations(profile, target_total)
         result["source"] = "fallback"
         result["error"] = str(exc)
         return result

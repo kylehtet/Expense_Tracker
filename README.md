@@ -1,7 +1,7 @@
 # Expense Tracker
 
 A free, open personal finance app powered by Plaid. Connect a bank account and it sorts
-transactions into six fixed categories, tracks them against budgets you set, and — the actual
+transactions into seven fixed categories, tracks them against budgets you set, and — the actual
 point of the app — tells you whether you can afford something *before* you spend, not after.
 Savings goals and recurring-charge detection build on the same real, synced data.
 
@@ -10,7 +10,7 @@ Educational estimate only, not financial advice, and not a licensed financial se
 ## Features
 
 - **Bank sync** — Plaid Link (Sandbox or Production), read-only, encrypted access token
-- **Six fixed categories** — Housing, Food, Transport, Subscriptions, Entertainment, Other
+- **Seven fixed categories** — Housing, Food, Transport, Shopping, Subscriptions, Entertainment, Other
 - **Budgets** — a monthly limit per category; the LLM proposes the starting number itself from real spending history (a simple average-based rule is used only as a fallback if the AI call fails) — unlike the rest of the app, this figure is not deterministic
 - **"Can I afford this?"** — a deterministic rules engine checks a purchase against real budget headroom; an LLM only writes the plain-language explanation afterward, never the math
 - **Savings goals** — track progress toward a target, with a pace check that flags when spending is putting a goal behind schedule, plus an auto-budget suggestion: the LLM proposes which categories to trim and by how much, but deterministic code enforces a floor (never cuts a category below half its average spend) and rescales the cuts so they provably add up to the amount needed — the model picks the allocation, the code guarantees the total

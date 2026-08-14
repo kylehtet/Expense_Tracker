@@ -241,6 +241,7 @@ function App() {
             transactions={transactions}
             goals={goals}
             onGoalsChanged={refreshGoals}
+            onTransactionsChanged={() => setRefreshKey((k) => k + 1)}
             location={location}
           />
         ) : (

@@ -29,6 +29,7 @@
   --cat-transport: light-dark(#5b6fb5, #8b9cdc);
   --cat-other: light-dark(#7a7a7d, #9a9b9f);
   --cat-subs: light-dark(#8e5f8c, #bd8fbb);
+  --cat-shopping: light-dark(#a8531f, #dd9b64);
 
   /* Status - fg is used as text, both modes clear 4.5:1 on its own bg */
   --good: light-dark(#26694c, #63c193);

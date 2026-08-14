@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-INTERNAL_CATEGORIES = ("Housing", "Food", "Transport", "Subscriptions", "Entertainment", "Other")
+INTERNAL_CATEGORIES = ("Housing", "Food", "Transport", "Shopping", "Subscriptions", "Entertainment", "Other")
 
 # Plaid's personal_finance_category.primary values (per plaid.com/documents/pfc-taxonomy-all.csv)
 # that map cleanly onto our taxonomy. Anything absent from this map falls back to "Other".
@@ -13,6 +13,7 @@ _PRIMARY_CATEGORY_MAP = {
     "TRANSPORTATION": "Transport",
     "TRAVEL": "Transport",
     "ENTERTAINMENT": "Entertainment",
+    "GENERAL_MERCHANDISE": "Shopping",
 }
 
 # Plaid's taxonomy has no distinct "subscription" category - streaming services
@@ -26,7 +27,6 @@ _SUBSCRIPTION_MERCHANT_KEYWORDS = (
     "disney+",
     "disney plus",
     "hbo max",
-    "amazon prime",
     "youtube premium",
     "apple music",
     "apple tv",
@@ -42,11 +42,29 @@ _SUBSCRIPTION_MERCHANT_KEYWORDS = (
     "playstation plus",
 )
 
+# General-merchandise retailers, checked ahead of GENERAL_MERCHANDISE above so
+# a specific storefront always wins over Plaid's broader primary category -
+# same "known merchant name first" approach as subscriptions. "amazon" alone
+# (not just "amazon prime") catches ordinary Amazon purchases too, which
+# GENERAL_MERCHANDISE doesn't always pick up depending on how Plaid classified
+# the specific charge. Deliberately excludes retailers that are just as
+# commonly *not* general shopping under the same name - Costco gas and Target
+# grocery runs are common enough that a blanket keyword match would be wrong
+# more often than it's right; those stay on Plaid's own category instead.
+_SHOPPING_MERCHANT_KEYWORDS = (
+    "walmart",
+    "amazon",
+    "ebay",
+    "best buy",
+)
+
 
 def categorize_transaction(transaction: dict) -> str:
     merchant = (transaction.get("merchant_name") or transaction.get("name") or "").lower()
     if any(keyword in merchant for keyword in _SUBSCRIPTION_MERCHANT_KEYWORDS):
         return "Subscriptions"
+    if any(keyword in merchant for keyword in _SHOPPING_MERCHANT_KEYWORDS):
+        return "Shopping"
 
     primary = (transaction.get("personal_finance_category") or {}).get("primary")
     return _PRIMARY_CATEGORY_MAP.get(primary, "Other")

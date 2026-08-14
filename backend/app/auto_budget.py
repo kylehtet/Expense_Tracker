@@ -23,15 +23,15 @@ FEATURE = "auto_budget"
 # category isn't useful, it's just a number nobody will actually follow.
 MIN_BUDGET_FRACTION = 0.5
 
-_DISCRETIONARY_PRIORITY = ["Entertainment", "Subscriptions", "Other", "Food", "Transport", "Housing"]
+_DISCRETIONARY_PRIORITY = ["Entertainment", "Subscriptions", "Shopping", "Other", "Food", "Transport", "Housing"]
 
 SYSTEM_PROMPT = (
     "A user wants to free up a specific amount more per month toward a savings "
     "goal. Given their real average monthly spend per category, propose a new "
     "monthly budget for each category such that the total reduction from "
     "current average spend is at least the amount needed. Prefer cutting "
-    "discretionary categories first (Entertainment, Subscriptions, Other, "
-    "Food) before fixed ones (Housing, Transport). Never propose a budget "
+    "discretionary categories first (Entertainment, Subscriptions, Shopping, "
+    "Other, Food) before fixed ones (Housing, Transport). Never propose a budget "
     "below half a category's average spend. One short, concrete rationale per "
     "category referencing the actual numbers - never invent a spend figure. "
     "If reference facts are given for Housing (local rent, mortgage rates), "

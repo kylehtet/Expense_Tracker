@@ -93,6 +93,46 @@ class TestRecommendBudgets:
             assert rec["recommended_budget"] > 0
             assert rec["category"] in rec["rationale"] or True  # rationale is free text
 
+    def test_rescales_ai_recommendations_to_hit_target_total(self, sandbox_transactions):
+        with patch("app.recommend._get_client") as get_client:
+            get_client.return_value.messages.parse.return_value = _mock_parse_response(
+                [
+                    {"category": "Housing", "recommended_budget": 1000.0, "rationale": "a"},
+                    {"category": "Food", "recommended_budget": 400.0, "rationale": "b"},
+                    {"category": "Entertainment", "recommended_budget": 200.0, "rationale": "c"},
+                ],
+                "summary",
+            )
+            result = recommend_budgets(sandbox_transactions, {}, months=3, target_total=800.0)
+
+        by_category = {r["category"]: r["recommended_budget"] for r in result["recommendations"]}
+        assert by_category == {"Housing": 500.0, "Food": 200.0, "Entertainment": 100.0}
+        assert round(sum(by_category.values()), 2) == 800.0
+
+    def test_no_rescale_needed_when_ai_already_matches_target(self, sandbox_transactions):
+        with patch("app.recommend._get_client") as get_client:
+            get_client.return_value.messages.parse.return_value = _mock_parse_response(
+                [{"category": "Housing", "recommended_budget": 800.0, "rationale": "a"}],
+                "summary",
+            )
+            result = recommend_budgets(sandbox_transactions, {}, months=3, target_total=800.0)
+
+        assert result["recommendations"][0]["recommended_budget"] == 800.0
+
+    def test_fallback_also_respects_target_total(self, sandbox_transactions):
+        with patch("app.recommend._get_client") as get_client:
+            get_client.return_value.messages.parse.side_effect = RuntimeError("boom")
+            unscaled = recommend_budgets(sandbox_transactions, {}, months=3)
+            scaled = recommend_budgets(sandbox_transactions, {}, months=3, target_total=100.0)
+
+        assert scaled["source"] == "fallback"
+        unscaled_total = sum(r["recommended_budget"] for r in unscaled["recommendations"])
+        scaled_total = sum(r["recommended_budget"] for r in scaled["recommendations"])
+        assert unscaled_total > 100.0  # sanity check the fixture actually needed scaling down
+        # Each category is rounded to the cent independently, so the summed total can
+        # drift a few cents from the exact target - that's expected, not a bug.
+        assert abs(scaled_total - 100.0) < 0.1
+
     def test_fallback_rounds_up_to_nearest_ten(self, sandbox_transactions):
         with patch("app.recommend._get_client") as get_client:
             get_client.return_value.messages.parse.side_effect = RuntimeError("boom")

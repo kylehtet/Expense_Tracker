@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
-from sqlalchemy import Float, String, UniqueConstraint, create_engine, delete, func, select
+from sqlalchemy import Boolean, Float, String, UniqueConstraint, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from app.config import DATABASE_URL
@@ -70,6 +70,11 @@ class TransactionRecord(Base):
     merchant_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     amount: Mapped[float] = mapped_column(Float)
     category: Mapped[str] = mapped_column(String)
+    # True once a user manually corrects a transaction's category - upsert_transactions
+    # skips reassigning the auto-detected category for these rows, so a fix doesn't get
+    # silently clobbered by the next sync (Plaid re-sends "modified" for pending-to-posted
+    # transitions on the same transaction_id, which would otherwise re-run auto-categorization).
+    category_overridden: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ProductionLinkEvent(Base):
@@ -224,7 +229,8 @@ def upsert_transactions(db: Session, user_id: str, categorized_transactions: lis
             existing.name = txn["name"]
             existing.merchant_name = txn.get("merchant_name")
             existing.amount = txn["amount"]
-            existing.category = txn["category"]
+            if not existing.category_overridden:
+                existing.category = txn["category"]
         else:
             db.add(
                 TransactionRecord(
@@ -240,6 +246,20 @@ def upsert_transactions(db: Session, user_id: str, categorized_transactions: lis
         count += 1
     db.commit()
     return count
+
+
+def set_transaction_category(db: Session, user_id: str, transaction_id: str, category: str) -> Optional[TransactionRecord]:
+    """Manual correction, scoped to the requesting user so nobody can retag
+    another account's transaction. Marks the row as overridden so the next
+    sync's auto-categorization leaves it alone (see upsert_transactions)."""
+    txn = db.get(TransactionRecord, transaction_id)
+    if txn is None or txn.user_id != user_id:
+        return None
+    txn.category = category
+    txn.category_overridden = True
+    db.commit()
+    db.refresh(txn)
+    return txn
 
 
 def get_transactions(

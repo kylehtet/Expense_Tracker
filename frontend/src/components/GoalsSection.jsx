@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
-const CATEGORIES = ["Housing", "Food", "Transport", "Subscriptions", "Entertainment", "Other"];
+const CATEGORIES = ["Housing", "Food", "Transport", "Shopping", "Subscriptions", "Entertainment", "Other"];
 
 const PACE_TOKEN = {
   ahead: { fg: "var(--good)", bg: "var(--good-bg)", br: "var(--good-br)", label: "Ahead of pace" },

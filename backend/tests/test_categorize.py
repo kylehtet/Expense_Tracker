@@ -22,6 +22,7 @@ class TestCategorizeTransaction:
             ("TRANSPORTATION", "Transport"),
             ("TRAVEL", "Transport"),
             ("ENTERTAINMENT", "Entertainment"),
+            ("GENERAL_MERCHANDISE", "Shopping"),
         ],
     )
     def test_maps_primary_category(self, primary, expected):
@@ -31,7 +32,6 @@ class TestCategorizeTransaction:
     @pytest.mark.parametrize(
         "primary",
         [
-            "GENERAL_MERCHANDISE",
             "BANK_FEES",
             "MEDICAL",
             "INCOME",
@@ -69,6 +69,34 @@ class TestCategorizeTransaction:
     def test_non_subscription_entertainment_stays_entertainment(self):
         txn = _txn("AMC Theatres", primary="ENTERTAINMENT")
         assert categorize_transaction(txn) == "Entertainment"
+
+    @pytest.mark.parametrize("merchant", ["Walmart", "Amazon", "Amazon Prime", "eBay", "Best Buy"])
+    def test_known_retailers_are_shopping(self, merchant):
+        txn = _txn("Some Description", primary="GENERAL_SERVICES", merchant_name=merchant)
+        assert categorize_transaction(txn) == "Shopping"
+
+    def test_costco_and_target_are_not_keyword_matched(self):
+        # Deliberately excluded - both sell enough groceries/gas under the same
+        # name that a blanket "Shopping" match would be wrong as often as right.
+        # They fall through to Plaid's own category instead (Food, Transport, etc).
+        costco_gas = _txn("Costco Gas", primary="TRANSPORTATION", merchant_name="Costco")
+        assert categorize_transaction(costco_gas) == "Transport"
+
+    def test_shopping_match_is_case_insensitive(self):
+        txn = _txn("WALMART SUPERCENTER", primary="GENERAL_SERVICES")
+        assert categorize_transaction(txn) == "Shopping"
+
+    def test_shopping_wins_over_general_merchandise_mapping_either_way(self):
+        # Same outcome whether it's the keyword match or the primary-category
+        # fallback that catches it - this just documents that both paths agree.
+        txn = _txn("Amazon.com", primary="GENERAL_MERCHANDISE", merchant_name="Amazon")
+        assert categorize_transaction(txn) == "Shopping"
+
+    def test_subscription_keyword_still_wins_over_shopping_when_both_could_match(self):
+        # Netflix isn't a shopping keyword, but this documents the precedence
+        # order deliberately: subscriptions are checked before shopping.
+        txn = _txn("NETFLIX.COM", primary="ENTERTAINMENT", merchant_name="Netflix")
+        assert categorize_transaction(txn) == "Subscriptions"
 
 
 class TestCategorizeWithLlm:

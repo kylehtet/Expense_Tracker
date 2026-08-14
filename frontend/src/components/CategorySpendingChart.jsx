@@ -5,6 +5,7 @@ const CATEGORY_VAR = {
   Transport: "var(--cat-transport)",
   Other: "var(--cat-other)",
   Subscriptions: "var(--cat-subs)",
+  Shopping: "var(--cat-shopping)",
 };
 
 const currency = (value) => `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;

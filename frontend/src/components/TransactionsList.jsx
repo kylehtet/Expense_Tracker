@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { api } from "../api";
+
 const CATEGORY_VAR = {
   Housing: "var(--cat-housing)",
   Food: "var(--cat-food)",
@@ -5,14 +8,55 @@ const CATEGORY_VAR = {
   Transport: "var(--cat-transport)",
   Other: "var(--cat-other)",
   Subscriptions: "var(--cat-subs)",
+  Shopping: "var(--cat-shopping)",
 };
+
+const CATEGORIES = ["Housing", "Food", "Transport", "Shopping", "Subscriptions", "Entertainment", "Other"];
 
 const currency = (amount) => {
   const sign = amount < 0 ? "+" : "";
   return `${sign}$${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-export function TransactionsList({ transactions, compact = false }) {
+function CategoryPicker({ transaction, onChanged }) {
+  const [state, setState] = useState("idle"); // idle | saving | error
+
+  const handleChange = async (e) => {
+    const category = e.target.value;
+    if (category === transaction.category) return;
+    setState("saving");
+    try {
+      await api.updateTransactionCategory(transaction.transaction_id, category);
+      await onChanged();
+      setState("idle");
+    } catch {
+      setState("error");
+    }
+  };
+
+  return (
+    <span className="flex items-center gap-1.5 text-[12.5px] text-ink-faint">
+      <select
+        value={transaction.category}
+        onChange={handleChange}
+        onClick={(e) => e.stopPropagation()}
+        disabled={state === "saving"}
+        title="Fix the category if this got sorted wrong - it'll stick across future syncs."
+        className="cursor-pointer appearance-none border-0 bg-transparent p-0 text-[12.5px] text-ink-faint outline-none hover:text-accent-deep disabled:opacity-50"
+      >
+        {CATEGORIES.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+      {state === "saving" && <span>saving…</span>}
+      {state === "error" && <span className="text-crit">couldn't save</span>}
+    </span>
+  );
+}
+
+export function TransactionsList({ transactions, compact = false, onCategoryChanged }) {
   if (transactions.length === 0) {
     return <p className="text-sm text-ink-faint">No transactions synced yet.</p>;
   }
@@ -58,8 +102,13 @@ export function TransactionsList({ transactions, compact = false }) {
             />
             <span className="flex min-w-0 flex-col gap-[3px]">
               <span className="truncate text-[14.5px] text-ink">{t.merchant_name || t.name}</span>
-              <span className="text-[12.5px] text-ink-faint">
-                {t.category} &middot; {t.date}
+              <span className="flex items-center gap-1 text-[12.5px] text-ink-faint">
+                {onCategoryChanged ? (
+                  <CategoryPicker transaction={t} onChanged={onCategoryChanged} />
+                ) : (
+                  t.category
+                )}
+                <span>&middot; {t.date}</span>
               </span>
             </span>
           </span>

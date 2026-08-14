@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.affordability import check_purchase
 from app.budget import budget_status
-from app.categorize import categorize_transaction
+from app.categorize import INTERNAL_CATEGORIES, categorize_transaction
 from app.config import ALLOWED_ORIGINS, IS_SANDBOX, PLAID_ENV
 from app.db import (
     GoalRecord,
@@ -35,6 +35,7 @@ from app.db import (
     record_production_link,
     save_item,
     set_budget,
+    set_transaction_category,
     update_goal,
     upsert_transactions,
 )
@@ -81,6 +82,19 @@ _last_auto_budget_at: dict[str, datetime] = {}
 # app.db.ProductionLinkEvent for why this is a lifetime count, not a
 # currently-connected count.
 PRODUCTION_CONNECTION_LIMIT = 10
+
+# Shared, pre-seeded account anyone can log into from the landing page to try
+# the real app without connecting a real (or even a Sandbox) bank themselves.
+# Read-only by convention, not by database permissions - every endpoint that
+# would change this account's data rejects it explicitly instead.
+DEMO_UID = "k5lRfPrAXuhTKU2VNkaZINIAhx92"
+
+
+def _reject_if_demo(uid: str) -> None:
+    if uid == DEMO_UID:
+        raise HTTPException(
+            status_code=403, detail="This is the shared demo account - changes here aren't saved."
+        )
 
 # Unauthenticated (no Firebase login) - keyed by request IP rather than uid,
 # since there's no account to key on yet. Generous cooldown, just enough to
@@ -180,6 +194,7 @@ class AffordabilityResponse(BaseModel):
 
 class RecommendBudgetRequest(BaseModel):
     months: int = 6
+    target_total: Optional[float] = None
 
 
 class CategoryRecommendationOut(BaseModel):
@@ -443,6 +458,7 @@ def get_me(decoded_token: dict = Depends(require_firebase_auth), db: DbSession =
 
 @app.post("/link/token", response_model=LinkTokenResponse)
 def link_token(decoded_token: dict = Depends(require_firebase_auth)) -> LinkTokenResponse:
+    _reject_if_demo(decoded_token["uid"])
     token = create_link_token(user_id=decoded_token["uid"])
     return LinkTokenResponse(link_token=token)
 
@@ -454,6 +470,7 @@ def link_exchange(
     db: DbSession = Depends(get_db),
 ) -> ExchangeResponse:
     uid = decoded_token["uid"]
+    _reject_if_demo(uid)
     access_token = exchange_public_token(payload.public_token)
     save_item(db, uid, access_token)
     if not IS_SANDBOX:
@@ -466,6 +483,7 @@ def disconnect(
     decoded_token: dict = Depends(require_firebase_auth), db: DbSession = Depends(get_db)
 ) -> DisconnectResponse:
     uid = decoded_token["uid"]
+    _reject_if_demo(uid)
     access_token = delete_item(db, uid)
     if access_token is None:
         raise HTTPException(status_code=404, detail="No linked bank account for this user")
@@ -482,6 +500,7 @@ def disconnect(
 @app.post("/sync", response_model=SyncResponse)
 def sync(decoded_token: dict = Depends(require_firebase_auth), db: DbSession = Depends(get_db)) -> SyncResponse:
     uid = decoded_token["uid"]
+    _reject_if_demo(uid)
     _check_sync_rate_limit(uid)
 
     access_token = get_access_token(db, uid)
@@ -516,6 +535,26 @@ def list_transactions(
     return get_transactions(db, decoded_token["uid"], start_date=start_date, end_date=end_date, category=category)
 
 
+class UpdateTransactionCategoryRequest(BaseModel):
+    category: str
+
+
+@app.patch("/transactions/{transaction_id}", response_model=TransactionOut)
+def update_transaction_category(
+    transaction_id: str,
+    payload: UpdateTransactionCategoryRequest,
+    decoded_token: dict = Depends(require_firebase_auth),
+    db: DbSession = Depends(get_db),
+) -> TransactionRecord:
+    _reject_if_demo(decoded_token["uid"])
+    if payload.category not in INTERNAL_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"category must be one of {INTERNAL_CATEGORIES}")
+    txn = set_transaction_category(db, decoded_token["uid"], transaction_id, payload.category)
+    if txn is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return txn
+
+
 @app.get("/budget/status")
 def get_budget_status(
     start_date: Optional[str] = None,
@@ -541,6 +580,7 @@ def create_or_update_budget(
     decoded_token: dict = Depends(require_firebase_auth),
     db: DbSession = Depends(get_db),
 ) -> BudgetOut:
+    _reject_if_demo(decoded_token["uid"])
     record = set_budget(db, decoded_token["uid"], payload.category, payload.amount)
     return BudgetOut(category=record.category, amount=record.amount)
 
@@ -593,7 +633,9 @@ def recommend_budget(
 
     transactions = get_transactions(db, uid)
     budgets = get_budgets(db, uid)
-    result = recommend_budgets(_transactions_as_dicts(transactions), budgets, months=payload.months)
+    result = recommend_budgets(
+        _transactions_as_dicts(transactions), budgets, months=payload.months, target_total=payload.target_total
+    )
     return RecommendBudgetResponse(
         recommendations=result["recommendations"],
         summary=result["summary"],
@@ -608,6 +650,7 @@ def create_goal_endpoint(
     db: DbSession = Depends(get_db),
 ) -> GoalOut:
     uid = decoded_token["uid"]
+    _reject_if_demo(uid)
     if payload.target_amount <= 0:
         raise HTTPException(status_code=400, detail="target_amount must be positive")
 
@@ -692,6 +735,7 @@ def update_goal_endpoint(
     db: DbSession = Depends(get_db),
 ) -> GoalOut:
     uid = decoded_token["uid"]
+    _reject_if_demo(uid)
     fields = {key: value for key, value in payload.model_dump().items() if value is not None}
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -712,6 +756,7 @@ def delete_goal_endpoint(
     db: DbSession = Depends(get_db),
 ) -> GoalActionResponse:
     uid = decoded_token["uid"]
+    _reject_if_demo(uid)
     goal = abandon_goal(db, uid, goal_id)
     if goal is None:
         raise HTTPException(status_code=404, detail="Goal not found")

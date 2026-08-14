@@ -1,7 +1,17 @@
+import { useState } from "react";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "../firebase";
 import { Corners } from "./Corners";
 import { InterestForm } from "./InterestForm";
 
 const GITHUB_URL = "https://github.com/kylehtet/can_u_afford_it";
+
+// A shared, pre-seeded account anyone can view without connecting a real
+// bank themselves - read-only server-side (see app.main.DEMO_UID), so it's
+// safe to sign into from here with no gate. Not a secret; the whole point is
+// that visitors can use it.
+const DEMO_EMAIL = "demo@expensetracker.tech";
+const DEMO_PASSWORD = "TryTheDemo2026!";
 
 const NAV_LINKS = [
   { href: "#how", label: "How it works" },
@@ -14,6 +24,7 @@ const PREVIEW_CATS = [
   { name: "Food", spent: 612, budget: 700, hue: "var(--cat-food)" },
   { name: "Entertainment", spent: 402, budget: 500, hue: "var(--cat-entertainment)" },
   { name: "Transport", spent: 318, budget: 400, hue: "var(--cat-transport)" },
+  { name: "Shopping", spent: 289, budget: 350, hue: "var(--cat-shopping)" },
   { name: "Other", spent: 268, budget: 900, hue: "var(--cat-other)" },
   { name: "Subscriptions", spent: 164, budget: 150, hue: "var(--cat-subs)" },
 ];
@@ -44,8 +55,8 @@ const STEPS = [
   },
   {
     num: "02",
-    title: "Sort into six categories",
-    body: "Housing, Food, Transport, Subscriptions, Entertainment, Other. Fixed on purpose — six buckets you will actually keep up with beat forty you abandon.",
+    title: "Sort into seven categories",
+    body: "Housing, Food, Transport, Shopping, Subscriptions, Entertainment, Other. Fixed on purpose — seven buckets you will actually keep up with beat forty you abandon.",
     tag: "Working",
   },
   {
@@ -325,6 +336,19 @@ function HowItWorksSheet() {
 }
 
 export function LandingPage({ onTryDemo }) {
+  const [demoState, setDemoState] = useState("idle"); // idle | loading | error
+
+  const viewDemo = async () => {
+    if (!auth) return;
+    setDemoState("loading");
+    try {
+      await signInWithEmailAndPassword(auth, DEMO_EMAIL, DEMO_PASSWORD);
+      window.location.href = "/";
+    } catch {
+      setDemoState("error");
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "var(--ground)" }}>
       <header className="sticky top-0 z-10 flex items-center gap-7 border-b border-hairline bg-surface px-5 sm:px-[72px]">
@@ -382,6 +406,14 @@ export function LandingPage({ onTryDemo }) {
             <Corners />
             Connect your bank
           </button>
+          <button
+            type="button"
+            onClick={viewDemo}
+            disabled={demoState === "loading"}
+            className="whitespace-nowrap border border-field bg-transparent px-[22px] py-[15px] font-display text-[14px] font-semibold uppercase tracking-[.05em] text-ink hover:bg-sunken disabled:opacity-50"
+          >
+            {demoState === "loading" ? "Loading…" : "View live demo"}
+          </button>
           <a
             href={GITHUB_URL}
             target="_blank"
@@ -391,6 +423,9 @@ export function LandingPage({ onTryDemo }) {
             View source &rarr;
           </a>
         </div>
+        {demoState === "error" && (
+          <p className="m-0 mt-3 text-[13px] text-crit">Couldn't load the demo right now — try again in a moment.</p>
+        )}
       </section>
 
       <section className="mx-auto max-w-[1200px] px-5 pb-24 sm:px-[72px]">
