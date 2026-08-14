@@ -702,6 +702,152 @@ class TestAffordabilityCheck:
         assert response.json()["savings_plan"] is None
 
 
+FAKE_RATES = [
+    {"label": "30_year_fixed", "rate_percent": 6.5, "rate_decimal": 0.065, "as_of_date": "2026-08-01", "source": "test", "stale": False},
+    {"label": "15_year_fixed", "rate_percent": 5.9, "rate_decimal": 0.059, "as_of_date": "2026-08-01", "source": "test", "stale": False},
+]
+FAKE_STATES = [
+    {"state": "TX", "state_name": "Texas", "property_tax_rate": 0.018, "avg_annual_homeowners_insurance": 1800},
+]
+
+
+class TestHomeAffordability:
+    def _seed_paycheck(self, client):
+        _link_and_exchange(client)
+        raw = [
+            {
+                "transaction_id": f"pay{i}",
+                "date": d,
+                "name": "ACME CORP PAYROLL",
+                "merchant_name": "Acme Corp",
+                "amount": -2500.0,
+                "personal_finance_category": {"primary": "INCOME"},
+            }
+            for i, d in enumerate(["2026-06-05", "2026-06-19", "2026-07-03", "2026-07-17", "2026-07-31"])
+        ]
+        with patch("app.main.fetch_transactions", return_value={"added": raw, "modified": [], "removed": []}):
+            client.post("/sync")
+
+    def _patched(self):
+        return (
+            patch("app.main.fetch_mortgage_rates", return_value=FAKE_RATES),
+            patch("app.main.load_property_tax_insurance", return_value=FAKE_STATES),
+            patch("app.main.retrieve_housing_context", return_value=[]),
+        )
+
+    def test_rejects_when_no_income_history(self, client):
+        _link_and_exchange(client)
+        response = client.post(
+            "/affordability/home-purchase",
+            json={"price": 400000, "down_payment": 80000},
+        )
+        assert response.status_code == 400
+        assert "income" in response.json()["detail"].lower()
+
+    def test_computes_affordability_from_real_detected_income(self, client):
+        self._seed_paycheck(client)
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            response = client.post(
+                "/affordability/home-purchase",
+                json={"price": 300000, "down_payment": 60000, "location": "Austin, TX"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        # Biweekly $2500 paycheck -> 26 periods/year -> $65,000/yr, entirely
+        # detected from real synced transactions, no manual income entry.
+        assert body["estimated_annual_income"] == 65000.0
+        assert body["income_sources"][0]["source"] == "Acme Corp"
+        assert body["income_sources"][0]["periods_per_year"] == 26
+        assert body["front_end_limit"] == 0.28
+        assert body["back_end_limit"] == 0.36
+        assert "dti_ratio" in body
+
+    def test_uses_rag_sourced_defaults_when_not_overridden(self, client):
+        self._seed_paycheck(client)
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            response = client.post(
+                "/affordability/home-purchase",
+                json={"price": 300000, "down_payment": 60000, "location": "Austin, TX"},
+            )
+        body = response.json()
+        assert body["interest_rate_used"] == 0.065
+        assert body["property_tax_rate_used"] == 0.018
+        assert body["annual_insurance_estimate_used"] == 1800
+
+    def test_explicit_overrides_win_over_rag_defaults(self, client):
+        self._seed_paycheck(client)
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            response = client.post(
+                "/affordability/home-purchase",
+                json={
+                    "price": 300000,
+                    "down_payment": 60000,
+                    "interest_rate": 0.07,
+                    "property_tax_rate": 0.02,
+                    "annual_insurance_estimate": 2000,
+                },
+            )
+        body = response.json()
+        assert body["interest_rate_used"] == 0.07
+        assert body["property_tax_rate_used"] == 0.02
+        assert body["annual_insurance_estimate_used"] == 2000
+
+    def test_other_monthly_debts_reduces_affordability(self, client):
+        self._seed_paycheck(client)
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            no_debt = client.post(
+                "/affordability/home-purchase",
+                json={"price": 300000, "down_payment": 60000},
+            )
+        _last_affordability_check_at.clear()
+        with p1, p2, p3:
+            with_debt = client.post(
+                "/affordability/home-purchase",
+                json={"price": 300000, "down_payment": 60000, "other_monthly_debts": 800.0},
+            )
+        assert with_debt.json()["dti_ratio"] > no_debt.json()["dti_ratio"]
+        assert with_debt.json()["max_affordable_price"] < no_debt.json()["max_affordable_price"]
+
+    def test_rejects_down_payment_greater_than_price(self, client):
+        self._seed_paycheck(client)
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            response = client.post(
+                "/affordability/home-purchase",
+                json={"price": 300000, "down_payment": 400000},
+            )
+        assert response.status_code == 400
+
+    def test_rejects_negative_other_debts(self, client):
+        self._seed_paycheck(client)
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            response = client.post(
+                "/affordability/home-purchase",
+                json={"price": 300000, "down_payment": 60000, "other_monthly_debts": -1.0},
+            )
+        assert response.status_code == 400
+
+    def test_shares_the_affordability_cooldown(self, client):
+        self._seed_paycheck(client)
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            first = client.post(
+                "/affordability/home-purchase",
+                json={"price": 300000, "down_payment": 60000},
+            )
+            second = client.post(
+                "/affordability/home-purchase",
+                json={"price": 300000, "down_payment": 60000},
+            )
+        assert first.status_code == 200
+        assert second.status_code == 429
+
+
 class TestGoals:
     def _seed(self, client):
         _link_and_exchange(client)

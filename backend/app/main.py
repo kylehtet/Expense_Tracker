@@ -49,10 +49,12 @@ from app.goal_tracker import (
     redirect_impact,
     required_additional_capacity,
 )
+from app.income import estimate_annual_income
 from app.plaid_client import create_link_token, exchange_public_token, fetch_transactions, remove_item
 from app.recommend import recommend_budgets, spending_profile
 from app.recurring import detect_recurring_charges
-from app.retrieval import retrieve_housing_context
+from app.retrieval import fetch_mortgage_rates, load_property_tax_insurance, retrieve_housing_context
+from app.rules import housing_affordability
 
 # Single-process, in-memory cooldown. Fine for the MVP's single-worker demo
 # deployment; move to a shared store (Redis, or a DB-backed timestamp) before
@@ -190,6 +192,48 @@ class AffordabilityResponse(BaseModel):
     math: dict
     retrieved_facts: list[RetrievedFactOut] = []
     savings_plan: Optional[SavingsPlanOut] = None
+
+
+class HomeAffordabilityRequest(BaseModel):
+    price: float
+    down_payment: float
+    loan_term_months: int = 360
+    interest_rate: Optional[float] = None  # annual decimal; defaults to current RAG-sourced rate
+    property_tax_rate: Optional[float] = None  # annual decimal; defaults to RAG-sourced state rate
+    annual_insurance_estimate: Optional[float] = None  # defaults to RAG-sourced state average
+    other_monthly_debts: float = 0.0  # sum of recurring charges the user marked as debt obligations
+    location: Optional[str] = None
+
+
+class IncomeSourceOut(BaseModel):
+    source: str
+    average_amount: float
+    average_interval_days: int
+    occurrences: int
+    last_received: str
+    periods_per_year: int
+    estimated_annual: float
+
+
+class HomeAffordabilityResponse(BaseModel):
+    affordable: bool
+    max_affordable_price: float
+    monthly_payment_estimate: float
+    monthly_principal_interest: float
+    monthly_property_tax: float
+    monthly_insurance: float
+    monthly_income: float
+    front_end_ratio: float
+    dti_ratio: float
+    front_end_limit: float
+    back_end_limit: float
+    estimated_annual_income: float
+    income_sources: list[IncomeSourceOut]
+    other_monthly_debts: float
+    interest_rate_used: float
+    property_tax_rate_used: float
+    annual_insurance_estimate_used: float
+    retrieved_facts: list[RetrievedFactOut] = []
 
 
 class RecommendBudgetRequest(BaseModel):
@@ -364,6 +408,20 @@ def _housing_context(location: Optional[str]) -> list[dict]:
         return retrieve_housing_context(location or "")
     except Exception:
         return []
+
+
+def _infer_state(location: Optional[str], states: list[dict]) -> Optional[dict]:
+    """Best-effort match of a free-text location against the property-tax/
+    insurance dataset's state list, by 2-letter code or full name appearing
+    anywhere in the string. Returns None (caller falls back to a national
+    average) rather than guessing wrong."""
+    if not location:
+        return None
+    tokens = location.lower().replace(",", " ").split()
+    for state in states:
+        if state["state"].lower() in tokens or state["state_name"].lower() in location.lower():
+            return state
+    return None
 
 
 def _transactions_as_dicts(transactions: list[TransactionRecord]) -> list[dict]:
@@ -619,6 +677,75 @@ def check_affordability(
         math=math,
         retrieved_facts=retrieved_facts,
         savings_plan=savings_plan,
+    )
+
+
+@app.post("/affordability/home-purchase", response_model=HomeAffordabilityResponse)
+def check_home_affordability(
+    payload: HomeAffordabilityRequest,
+    decoded_token: dict = Depends(require_firebase_auth),
+    db: DbSession = Depends(get_db),
+) -> HomeAffordabilityResponse:
+    """28/36 debt-to-income affordability check (app.rules.housing_affordability)
+    fed by real data instead of manual entry: income and other-debt figures come
+    from detecting the user's actual recurring deposits/charges, and the mortgage
+    rate/property-tax/insurance defaults come from the RAG layer (app.retrieval)
+    when not explicitly overridden. Only price, down payment, and loan term
+    describe the hypothetical purchase itself - those can't come from past
+    transaction history since they're about a home the user doesn't own yet."""
+    uid = decoded_token["uid"]
+    _check_affordability_rate_limit(uid)
+
+    if payload.price <= 0:
+        raise HTTPException(status_code=400, detail="price must be positive")
+    if payload.down_payment < 0 or payload.down_payment > payload.price:
+        raise HTTPException(status_code=400, detail="down_payment must be between 0 and price")
+    if payload.other_monthly_debts < 0:
+        raise HTTPException(status_code=400, detail="other_monthly_debts cannot be negative")
+
+    transactions = _transactions_for_recurring(get_transactions(db, uid))
+    income_info = estimate_annual_income(transactions)
+    if income_info["estimated_annual_income"] <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough recurring income history yet - sync more transaction history first.",
+        )
+
+    rates = fetch_mortgage_rates()
+    default_rate = next(
+        (r["rate_decimal"] for r in rates if r["label"] == "30_year_fixed"),
+        rates[0]["rate_decimal"] if rates else 0.065,
+    )
+    state = _infer_state(payload.location, load_property_tax_insurance())
+    default_tax_rate = state["property_tax_rate"] if state else 0.011
+    default_insurance = state["avg_annual_homeowners_insurance"] if state else 1500.0
+
+    interest_rate = payload.interest_rate if payload.interest_rate is not None else default_rate
+    property_tax_rate = payload.property_tax_rate if payload.property_tax_rate is not None else default_tax_rate
+    insurance_estimate = (
+        payload.annual_insurance_estimate if payload.annual_insurance_estimate is not None else default_insurance
+    )
+
+    result = housing_affordability(
+        income=income_info["estimated_annual_income"],
+        price=payload.price,
+        down_payment=payload.down_payment,
+        interest_rate=interest_rate,
+        property_tax_rate=property_tax_rate,
+        insurance_estimate=insurance_estimate,
+        loan_term_months=payload.loan_term_months,
+        other_monthly_debts=payload.other_monthly_debts,
+    )
+
+    return HomeAffordabilityResponse(
+        **result,
+        estimated_annual_income=income_info["estimated_annual_income"],
+        income_sources=income_info["income_sources"],
+        other_monthly_debts=payload.other_monthly_debts,
+        interest_rate_used=interest_rate,
+        property_tax_rate_used=property_tax_rate,
+        annual_insurance_estimate_used=insurance_estimate,
+        retrieved_facts=_housing_context(payload.location),
     )
 
 

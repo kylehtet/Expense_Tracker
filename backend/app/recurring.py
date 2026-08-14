@@ -27,14 +27,19 @@ def _parse_date(value) -> date:
     return date.fromisoformat(str(value)[:10])
 
 
-def _longest_recurring_chain(sorted_txns: list[dict]) -> list[dict]:
+def _longest_recurring_chain(
+    sorted_txns: list[dict], min_interval_days: int = MIN_INTERVAL_DAYS, max_interval_days: int = MAX_INTERVAL_DAYS
+) -> list[dict]:
     """Longest run of transactions (in date order) that plausibly reads as one
-    subscription: each new charge lands 25-35 days after the previous one
-    kept in the chain, and its amount is within ~5% of the chain's average so
-    far (so a slowly-drifting bill like a utility still matches, rather than
-    requiring every step to be within tolerance of the one immediately before
-    it). Tries every possible start so one noisy/unrelated transaction from
-    the same merchant doesn't sink an otherwise-clean chain."""
+    subscription: each new charge lands min_interval_days-max_interval_days after
+    the previous one kept in the chain, and its amount is within ~5% of the
+    chain's average so far (so a slowly-drifting bill like a utility still
+    matches, rather than requiring every step to be within tolerance of the
+    one immediately before it). Tries every possible start so one noisy/
+    unrelated transaction from the same merchant doesn't sink an otherwise-
+    clean chain. Bounds default to the monthly-subscription window (25-35
+    days); app/income.py passes a wider window to also catch weekly/biweekly
+    paycheck cadences."""
     best: list[dict] = []
     n = len(sorted_txns)
     for start in range(n):
@@ -42,9 +47,9 @@ def _longest_recurring_chain(sorted_txns: list[dict]) -> list[dict]:
         for i in range(start + 1, n):
             candidate = sorted_txns[i]
             days = (candidate["_date"] - chain[-1]["_date"]).days
-            if days < MIN_INTERVAL_DAYS:
+            if days < min_interval_days:
                 continue
-            if days > MAX_INTERVAL_DAYS:
+            if days > max_interval_days:
                 break
             chain_avg = sum(float(t["amount"]) for t in chain) / len(chain)
             if chain_avg <= 0 or abs(float(candidate["amount"]) - chain_avg) / chain_avg > AMOUNT_TOLERANCE_PCT:

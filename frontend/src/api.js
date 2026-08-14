@@ -80,6 +80,30 @@ export const api = {
   checkAffordability: ({ price, category, timing, location }) =>
     request("/affordability/check", { method: "POST", body: { price, category, timing, location: location || undefined } }),
 
+  checkHomeAffordability: ({
+    price,
+    downPayment,
+    loanTermMonths,
+    interestRate,
+    propertyTaxRate,
+    annualInsuranceEstimate,
+    otherMonthlyDebts,
+    location,
+  }) =>
+    request("/affordability/home-purchase", {
+      method: "POST",
+      body: {
+        price,
+        down_payment: downPayment,
+        loan_term_months: loanTermMonths,
+        interest_rate: interestRate ?? undefined,
+        property_tax_rate: propertyTaxRate ?? undefined,
+        annual_insurance_estimate: annualInsuranceEstimate ?? undefined,
+        other_monthly_debts: otherMonthlyDebts || 0,
+        location: location || undefined,
+      },
+    }),
+
   submitInterest: (email) => request("/interest", { method: "POST", body: { email } }),
 
   updateTransactionCategory: (transactionId, category) =>

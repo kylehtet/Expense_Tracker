@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import { Corners } from "./Corners";
+import { HomePurchaseChecker } from "./HomePurchaseChecker";
 
 const CATEGORIES = ["Housing", "Food", "Transport", "Shopping", "Subscriptions", "Entertainment", "Other"];
 
@@ -22,6 +23,7 @@ const currency = (value) =>
     : `${value < 0 ? "−" : ""}$${Math.abs(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function AffordabilityChecker({ location, onGoalTracked }) {
+  const [mode, setMode] = useState("quick"); // quick | home
   const [phase, setPhase] = useState("form"); // form | result
   const [item, setItem] = useState("");
   const [price, setPrice] = useState("");
@@ -76,6 +78,10 @@ export function AffordabilityChecker({ location, onGoalTracked }) {
       setTrackState("error");
     }
   };
+
+  if (mode === "home") {
+    return <HomePurchaseChecker location={location} onBack={() => setMode("quick")} />;
+  }
 
   if (phase === "result" && result) {
     const token = VERDICT_TOKEN[result.verdict] ?? VERDICT_TOKEN.tight;
@@ -280,6 +286,15 @@ export function AffordabilityChecker({ location, onGoalTracked }) {
                 </button>
               ))}
             </div>
+            {category === "Housing" && (
+              <button
+                type="button"
+                onClick={() => setMode("home")}
+                className="mt-2.5 font-display text-[11px] font-semibold uppercase tracking-[.05em] text-accent-deep hover:text-accent-press"
+              >
+                Buying a home? Check mortgage affordability (28/36 rule) &rarr;
+              </button>
+            )}
           </div>
 
           {checkState === "error" && <p className="text-[13px] text-crit">{checkError}</p>}
