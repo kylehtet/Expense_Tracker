@@ -77,6 +77,9 @@ export const api = {
 
   getRecurring: () => request("/recurring"),
 
+  checkAffordability: ({ price, category, timing, location }) =>
+    request("/affordability/check", { method: "POST", body: { price, category, timing, location: location || undefined } }),
+
   submitInterest: (email) => request("/interest", { method: "POST", body: { email } }),
 
   updateTransactionCategory: (transactionId, category) =>

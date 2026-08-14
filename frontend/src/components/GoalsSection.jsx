@@ -162,6 +162,7 @@ function NewGoalForm({ onChanged, onClose }) {
 function AutoBudgetPanel({ goalId, onApplied, location }) {
   const [state, setState] = useState("loading"); // loading | ready | applying | applied | error
   const [data, setData] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,7 +174,19 @@ function AutoBudgetPanel({ goalId, onApplied, location }) {
           setState("ready");
         }
       })
-      .catch(() => !cancelled && setState("error"));
+      .catch((err) => {
+        if (cancelled) return;
+        // Cooldown is per-user, not per-goal, so opening a second goal's plan
+        // shortly after the first legitimately hits this - tell the user it's
+        // transient instead of showing a generic, permanent-looking failure.
+        if (err.status === 429) {
+          const match = /retry after (\d+)s/.exec(err.message);
+          setErrorMessage(match ? `Give it ${match[1]}s, then reopen this panel.` : "Give it a moment, then reopen this panel.");
+        } else {
+          setErrorMessage("Couldn't load a plan - try again later.");
+        }
+        setState("error");
+      });
     return () => {
       cancelled = true;
     };
@@ -191,7 +204,7 @@ function AutoBudgetPanel({ goalId, onApplied, location }) {
   };
 
   if (state === "loading") return <p className="mt-3 text-[13px] text-ink-faint">Working out a plan…</p>;
-  if (state === "error") return <p className="mt-3 text-[13px] text-crit">Couldn't load a plan - try again later.</p>;
+  if (state === "error") return <p className="mt-3 text-[13px] text-crit">{errorMessage}</p>;
   if (state === "applied") return <p className="mt-3 text-[13px] font-medium text-good">Applied - budgets updated.</p>;
   if (data.source === "not_needed") return <p className="mt-3 text-[13px] text-good">Already on pace for this goal.</p>;
   if (data.suggestions.length === 0) return <p className="mt-3 text-[13px] text-ink-faint">{data.summary}</p>;

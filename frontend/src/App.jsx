@@ -9,6 +9,7 @@ import { Footer } from "./components/Disclaimer";
 import { ConnectBankButton } from "./components/ConnectBankButton";
 import { VerifyEmailGate } from "./components/VerifyEmailGate";
 import { Dashboard } from "./components/Dashboard";
+import { AffordabilityChecker } from "./components/AffordabilityChecker";
 import { BudgetSettings } from "./components/BudgetSettings";
 import { Logo } from "./components/Logo";
 import { LandingPage } from "./components/LandingPage";
@@ -17,7 +18,7 @@ const SYNCED_AT_KEY_PREFIX = "expense_tracker_synced_at_";
 const LOCATION_KEY_PREFIX = "expense_tracker_location_";
 const SYNC_COOLDOWN_MS = 60_000; // mirrors backend SYNC_COOLDOWN_SECONDS in main.py
 
-const TABS = ["Dashboard", "Settings"];
+const TABS = ["Dashboard", "Can I afford this?", "Settings"];
 
 function timeAgo(date) {
   if (!date) return null;
@@ -244,6 +245,8 @@ function App() {
             onTransactionsChanged={() => setRefreshKey((k) => k + 1)}
             location={location}
           />
+        ) : tab === "Can I afford this?" ? (
+          <AffordabilityChecker location={location} onGoalTracked={refreshGoals} />
         ) : (
           <BudgetSettings
             status={status}
